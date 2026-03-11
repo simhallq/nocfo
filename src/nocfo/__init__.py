@@ -1,0 +1,1 @@
+"""NoCFO - Fortnox bookkeeping automation."""

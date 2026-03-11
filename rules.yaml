@@ -1,0 +1,81 @@
+# Transaction categorization rules for auto-journaling
+# Each rule matches bank transaction descriptions via regex
+# and maps to debit/credit account pairs.
+
+rules:
+  - name: salary_payment
+    description: "Salary payments"
+    pattern: "^(LÖN|LÖNEUTBETALNING|SALARY)"
+    case_insensitive: true
+    debit_account: 7210   # Löner tjänstemän
+    credit_account: 1930  # Företagskonto
+    vat_code: null
+
+  - name: employer_tax
+    description: "Employer social contributions"
+    pattern: "^(SKATTEVERKET|ARBETSGIVARAVGIFT)"
+    case_insensitive: true
+    debit_account: 7510   # Arbetsgivaravgifter
+    credit_account: 1930  # Företagskonto
+    vat_code: null
+
+  - name: vat_payment
+    description: "VAT payment to Skatteverket"
+    pattern: "(MOMS|VAT|SKATTEKONTO)"
+    case_insensitive: true
+    debit_account: 2650   # Momsredovisningskonto
+    credit_account: 1930  # Företagskonto
+    vat_code: null
+
+  - name: office_supplies
+    description: "Office supplies and equipment"
+    pattern: "(OFFICE DEPOT|STAPLES|CLAS OHLSON|KJELL)"
+    case_insensitive: true
+    debit_account: 5410   # Förbrukningsinventarier
+    credit_account: 1930  # Företagskonto
+    vat_code: MP1         # 25% moms
+
+  - name: software_subscription
+    description: "Software subscriptions"
+    pattern: "(GITHUB|AWS|GOOGLE CLOUD|AZURE|HEROKU|VERCEL|NETLIFY|SLACK|NOTION)"
+    case_insensitive: true
+    debit_account: 5420   # Programvaror
+    credit_account: 1930  # Företagskonto
+    vat_code: null         # Usually reverse charge for foreign services
+
+  - name: telecom
+    description: "Phone and internet"
+    pattern: "(TELIA|TELENOR|TRE|HALLON|COMVIQ|BREDBANDSBOLAGET)"
+    case_insensitive: true
+    debit_account: 6212   # Telekommunikation
+    credit_account: 1930  # Företagskonto
+    vat_code: MP1
+
+  - name: insurance
+    description: "Insurance premiums"
+    pattern: "(FÖRSÄKRING|IF SKADEFÖRSÄKRING|TRYGG.HANSA|LÄNSFÖRSÄKRING)"
+    case_insensitive: true
+    debit_account: 6310   # Företagsförsäkringar
+    credit_account: 1930  # Företagskonto
+    vat_code: null
+
+  - name: bank_fees
+    description: "Bank fees and charges"
+    pattern: "(MÅNADSAVGIFT|BANKAVGIFT|KONTOAVGIFT|KORTAVGIFT)"
+    case_insensitive: true
+    debit_account: 6570   # Bankavgifter
+    credit_account: 1930  # Företagskonto
+    vat_code: null
+
+  - name: customer_payment
+    description: "Incoming customer payments"
+    pattern: "^(INBETALNING|BGC|OCR)"
+    case_insensitive: true
+    debit_account: 1930   # Företagskonto
+    credit_account: 1510  # Kundfordringar
+    vat_code: null
+
+# Default rule (applied when no pattern matches)
+default:
+  action: flag_for_review
+  description: "Transaction did not match any rule - requires manual categorization"

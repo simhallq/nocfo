@@ -1,0 +1,24 @@
+{
+  "Voucher": {
+    "Description": "Löneutbetalning december",
+    "VoucherSeries": "A",
+    "VoucherNumber": 42,
+    "TransactionDate": "2024-12-25",
+    "Year": 2024,
+    "ReferenceNumber": "REF-001",
+    "VoucherRows": [
+      {
+        "Account": 7210,
+        "Debit": 35000.0,
+        "Credit": 0,
+        "TransactionInformation": "Löner tjänstemän"
+      },
+      {
+        "Account": 1930,
+        "Debit": 0,
+        "Credit": 35000.0,
+        "TransactionInformation": "Företagskonto"
+      }
+    ]
+  }
+}
