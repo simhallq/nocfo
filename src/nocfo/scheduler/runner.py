@@ -32,7 +32,8 @@ class Scheduler:
         logger.info("scheduler_jobs_registered", job_count=len(self._scheduler.get_jobs()))
 
     async def start(self) -> None:
-        """Start the scheduler."""
+        """Start the scheduler after verifying Fortnox connectivity."""
+        await self._run_health_check()
         self.setup()
         self._scheduler.start()
         self._running = True
@@ -67,6 +68,33 @@ class Scheduler:
                 }
             )
         return jobs
+
+    async def _run_health_check(self) -> None:
+        """Run health checks before starting. Abort on critical failures."""
+        from nocfo.fortnox.auth import TokenManager
+        from nocfo.fortnox.client import FortnoxClient
+        from nocfo.fortnox.health import HealthCheck
+
+        manager = TokenManager()
+        await manager.initialize()
+
+        if not manager.is_authenticated:
+            raise RuntimeError(
+                "Not authenticated. Run 'nocfo auth setup' before starting scheduler."
+            )
+
+        async with FortnoxClient(token_manager=manager) as client:
+            checker = HealthCheck(client)
+            report = await checker.run_all()
+
+        if not report.healthy:
+            failures = [c.name for c in report.critical_failures]
+            raise RuntimeError(
+                f"Health check failed — cannot start scheduler. "
+                f"Failing checks: {', '.join(failures)}"
+            )
+
+        logger.info("health_check_passed_starting_scheduler")
 
     def _write_heartbeat(self) -> None:
         """Write heartbeat file for health monitoring."""

@@ -1,7 +1,9 @@
 """Financial year and locked period API operations."""
 
+from datetime import date
 from typing import Any
 
+import httpx
 import structlog
 
 from nocfo.fortnox.client import FortnoxClient
@@ -26,13 +28,25 @@ class FinancialYearService:
         data = await self._client.get(f"/financialyears/{year_id}")
         return self._parse_year(data["FinancialYear"])
 
-    async def get_current(self) -> FinancialYear:
+    async def get_current(self) -> FinancialYear | None:
         """Get the current financial year based on today's date."""
-        from datetime import date
+        return await self.get_by_date(date.today())
 
-        today = date.today().isoformat()
-        data = await self._client.get(f"/financialyears/?date={today}")
-        return self._parse_year(data["FinancialYear"])
+    async def get_by_date(self, target_date: date) -> FinancialYear | None:
+        """Get the financial year that covers a specific date.
+
+        Returns None if no financial year exists for that date.
+        """
+        try:
+            data = await self._client.get(
+                f"/financialyears/?date={target_date.isoformat()}"
+            )
+            return self._parse_year(data["FinancialYear"])
+        except (httpx.HTTPStatusError, KeyError):
+            logger.warning(
+                "financial_year_not_found", date=target_date.isoformat()
+            )
+            return None
 
     async def get_locked_period(self) -> LockedPeriod | None:
         """Get the locked period end date from company settings."""

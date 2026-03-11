@@ -89,20 +89,39 @@ def setup() -> None:
 
 
 @auth.command()
-def status() -> None:
+@click.option("--health", is_flag=True, help="Run full health check against Fortnox API")
+def status(health: bool) -> None:
     """Check authentication status."""
     from nocfo.fortnox.auth import TokenManager
 
     async def _check():
         manager = TokenManager()
         await manager.initialize()
-        return manager.is_authenticated
+        return manager.is_authenticated, manager
 
-    is_auth = run_async(_check())
+    is_auth, manager = run_async(_check())
     if is_auth:
         click.echo("Authenticated: Yes")
     else:
         click.echo("Authenticated: No - run 'nocfo auth setup'")
+        return
+
+    if health:
+        from nocfo.fortnox.client import FortnoxClient
+        from nocfo.fortnox.health import HealthCheck
+
+        async def _health():
+            async with FortnoxClient(token_manager=manager) as client:
+                checker = HealthCheck(client)
+                return await checker.run_all()
+
+        click.echo("\nRunning health checks...")
+        report = run_async(_health())
+        click.echo(report.summary())
+        if not report.healthy:
+            click.echo(f"\n{len(report.critical_failures)} check(s) failed.")
+            sys.exit(1)
+        click.echo("\nAll checks passed.")
 
 
 # --- Voucher commands ---

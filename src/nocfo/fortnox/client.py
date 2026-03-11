@@ -25,21 +25,24 @@ class RateLimiter:
 
     async def acquire(self) -> None:
         """Wait until a request slot is available."""
-        async with self._lock:
-            now = time.monotonic()
+        while True:
+            async with self._lock:
+                now = time.monotonic()
 
-            # Remove timestamps outside the window
-            while self._timestamps and self._timestamps[0] <= now - self._window_seconds:
-                self._timestamps.popleft()
+                # Remove timestamps outside the window
+                while self._timestamps and self._timestamps[0] <= now - self._window_seconds:
+                    self._timestamps.popleft()
 
-            if len(self._timestamps) >= self._max_requests:
-                # Wait until the oldest request exits the window
+                if len(self._timestamps) < self._max_requests:
+                    self._timestamps.append(time.monotonic())
+                    return
+
+                # Compute sleep time but release the lock before sleeping
                 sleep_time = self._timestamps[0] + self._window_seconds - now
-                if sleep_time > 0:
-                    logger.debug("rate_limit_wait", sleep_seconds=round(sleep_time, 2))
-                    await asyncio.sleep(sleep_time)
 
-            self._timestamps.append(time.monotonic())
+            if sleep_time > 0:
+                logger.debug("rate_limit_wait", sleep_seconds=round(sleep_time, 2))
+                await asyncio.sleep(sleep_time)
 
 
 class FortnoxClient:
@@ -158,6 +161,32 @@ class FortnoxClient:
     async def delete(self, path: str, **kwargs: Any) -> dict[str, Any]:
         """DELETE request."""
         return await self.request("DELETE", path, **kwargs)
+
+    async def upload_file(
+        self,
+        path: str,
+        filename: str,
+        file_bytes: bytes,
+        content_type: str,
+    ) -> dict[str, Any]:
+        """Upload a file via multipart form data."""
+        if not self._client:
+            raise RuntimeError("Client not initialized. Use 'async with' context manager.")
+
+        await self._rate_limiter.acquire()
+        token = await self._token_manager.get_access_token()
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json",
+        }
+
+        response = await self._client.post(
+            path,
+            headers=headers,
+            files={"file": (filename, file_bytes, content_type)},
+        )
+        response.raise_for_status()
+        return response.json()  # type: ignore[no-any-return]
 
     async def get_all_pages(
         self,

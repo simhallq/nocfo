@@ -1,16 +1,24 @@
 """Journal entry creation, validation, and posting."""
 
+import asyncio
 from datetime import date
 from decimal import Decimal
+from pathlib import Path
 
 import structlog
 
+from nocfo.fortnox.accounts import AccountService
 from nocfo.fortnox.client import FortnoxClient
+from nocfo.fortnox.financial_years import FinancialYearService
 from nocfo.fortnox.models import Voucher, VoucherRow
 from nocfo.fortnox.vouchers import VoucherService
 from nocfo.storage.idempotency import IdempotencyStore, compute_idempotency_key
 
 logger = structlog.get_logger()
+
+
+class VoucherValidationError(Exception):
+    """Raised when pre-write validation fails."""
 
 
 # Common journal entry templates
@@ -46,8 +54,77 @@ class JournalService:
         client: FortnoxClient,
         idempotency_store: IdempotencyStore,
     ) -> None:
+        self._client = client
         self._voucher_service = VoucherService(client)
+        self._account_service = AccountService(client)
+        self._financial_year_service = FinancialYearService(client)
         self._idempotency = idempotency_store
+        self._inbox_service = None  # Lazy import to avoid circular deps
+        self._file_connection_service = None
+
+    async def validate_voucher_context(
+        self,
+        transaction_date: date,
+        rows: list[VoucherRow],
+    ) -> None:
+        """Validate that the Fortnox context allows posting this voucher.
+
+        Checks run concurrently:
+        1. Financial year exists for the transaction date
+        2. Transaction date is not in a locked period
+        3. All accounts in voucher rows are active
+
+        Raises VoucherValidationError on failure.
+        """
+        # Use a list to preserve order for matching gather results
+        account_numbers = sorted({r.account for r in rows})
+
+        # Run financial year + locked period checks concurrently
+        fy_task = self._financial_year_service.get_by_date(transaction_date)
+        locked_task = self._financial_year_service.get_locked_period()
+
+        # Fetch all accounts to check active status
+        accounts_task = asyncio.gather(
+            *[self._account_service.get(num) for num in account_numbers],
+            return_exceptions=True,
+        )
+
+        financial_year, locked_period, account_results = await asyncio.gather(
+            fy_task, locked_task, accounts_task, return_exceptions=False,
+        )
+
+        errors: list[str] = []
+
+        # Check financial year
+        if financial_year is None:
+            errors.append(
+                f"No financial year found for date {transaction_date.isoformat()}"
+            )
+
+        # Check locked period
+        if locked_period and transaction_date <= locked_period.end_date:
+            errors.append(
+                f"Transaction date {transaction_date.isoformat()} is in locked "
+                f"period (locked through {locked_period.end_date.isoformat()})"
+            )
+
+        # Check accounts — account_numbers is a sorted list matching gather order
+        for acct_num, result in zip(account_numbers, account_results):
+            if isinstance(result, Exception):
+                errors.append(f"Account {acct_num} not found in chart of accounts")
+            elif not result.active:
+                errors.append(f"Account {acct_num} ({result.description}) is inactive")
+
+        if errors:
+            raise VoucherValidationError(
+                "Voucher validation failed:\n" + "\n".join(f"  - {e}" for e in errors)
+            )
+
+        logger.debug(
+            "voucher_context_validated",
+            transaction_date=transaction_date.isoformat(),
+            accounts=sorted(account_numbers),
+        )
 
     async def create_entry(
         self,
@@ -56,8 +133,17 @@ class JournalService:
         rows: list[VoucherRow],
         voucher_series: str = "A",
         reference_number: str = "",
+        evidence_file: Path | None = None,
     ) -> Voucher | None:
         """Create and post a journal entry, skipping if already posted.
+
+        Args:
+            transaction_date: Date of the journal entry.
+            description: Voucher description.
+            rows: Voucher debit/credit rows.
+            voucher_series: Fortnox voucher series (default "A").
+            reference_number: Optional external reference.
+            evidence_file: Optional path to source document to attach.
 
         Returns the created Voucher, or None if it was a duplicate.
         """
@@ -68,6 +154,9 @@ class JournalService:
         if not await self._idempotency.try_claim(key):
             logger.info("duplicate_voucher_skipped", key=key[:8], description=description)
             return None
+
+        # Validate context before posting
+        await self.validate_voucher_context(transaction_date, rows)
 
         # Build and validate voucher
         voucher = Voucher(
@@ -92,7 +181,45 @@ class JournalService:
             total_amount=total,
         )
 
+        # Attach evidence if provided
+        if evidence_file:
+            await self._attach_evidence(result, evidence_file)
+
         return result
+
+    async def _attach_evidence(self, voucher: Voucher, file_path: Path) -> None:
+        """Upload evidence file and connect it to the voucher.
+
+        Logs a warning on failure but does not raise — the voucher is already posted.
+        """
+        try:
+            from nocfo.fortnox.file_connections import FileConnectionService
+            from nocfo.fortnox.inbox import InboxService
+
+            if self._inbox_service is None:
+                self._inbox_service = InboxService(self._client)
+            if self._file_connection_service is None:
+                self._file_connection_service = FileConnectionService(self._client)
+
+            file_id = await self._inbox_service.upload(file_path)
+            await self._file_connection_service.connect_to_voucher(
+                file_id=file_id,
+                voucher_series=voucher.voucher_series,
+                voucher_number=voucher.voucher_number or 0,
+                voucher_year=voucher.year,
+            )
+            logger.info(
+                "evidence_attached",
+                voucher_number=voucher.voucher_number,
+                file=file_path.name,
+            )
+        except Exception:
+            logger.warning(
+                "evidence_attachment_failed",
+                voucher_number=voucher.voucher_number,
+                file=str(file_path),
+                exc_info=True,
+            )
 
     async def create_from_template(
         self,
@@ -101,6 +228,7 @@ class JournalService:
         amount: Decimal,
         description: str,
         reference_number: str = "",
+        evidence_file: Path | None = None,
     ) -> Voucher | None:
         """Create a journal entry from a predefined template."""
         template = TEMPLATES.get(template_name)
@@ -119,4 +247,5 @@ class JournalService:
             description=description,
             rows=rows,
             reference_number=reference_number,
+            evidence_file=evidence_file,
         )
