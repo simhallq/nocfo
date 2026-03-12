@@ -438,7 +438,10 @@ def record_start(name: str, url: str | None, enhance: bool, cdp_url: str) -> Non
 
         try:
             while not stop_requested:
-                _time.sleep(0.5)
+                try:
+                    page.wait_for_timeout(500)
+                except Exception:
+                    _time.sleep(0.5)
                 recorder.process_pending()
         except KeyboardInterrupt:
             pass
