@@ -31,6 +31,27 @@ class Settings(BaseSettings):
         default=Path("data/workflows"), description="Directory for recorded workflow YAML files"
     )
 
+    # Browser API settings
+    browser_api_url: str = Field(
+        default="http://localhost:8790", description="Browser API server URL"
+    )
+    browser_api_token: str = Field(default="", description="Browser API bearer token")
+    browser_cdp_port: int = Field(default=9222, description="Chrome CDP port")
+    browser_profile_dir: Path = Field(
+        default=Path("data/browser_profile"), description="Chrome user data directory"
+    )
+
+    # Vision fallback & evidence settings
+    vision_fallback_enabled: bool = Field(
+        default=True, description="Enable Claude vision fallback for selector discovery"
+    )
+    screenshots_dir: Path = Field(
+        default=Path("data/screenshots"), description="Directory for evidence screenshots"
+    )
+    learned_selectors_path: Path = Field(
+        default=Path("data/learned_selectors.json"), description="Path to learned selectors store"
+    )
+
     def validate_fortnox_credentials(self) -> bool:
         """Check that Fortnox credentials are configured."""
         return bool(self.fortnox_client_id and self.fortnox_client_secret)

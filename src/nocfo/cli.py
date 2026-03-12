@@ -213,23 +213,38 @@ def reconcile() -> None:
 
 
 @reconcile.command("run")
-@click.option("--headed", is_flag=True, help="Run with visible browser")
-def reconcile_run(headed: bool) -> None:
+@click.option("--headed", is_flag=True, help="Run with visible browser (legacy web agent)")
+@click.option("--browser-api", is_flag=True, default=True, help="Use browser API (default)")
+def reconcile_run(headed: bool, browser_api: bool) -> None:
     """Run bank reconciliation."""
-    click.echo("Bank reconciliation requires web agent. Starting...")
+    if browser_api:
+        from nocfo.browser.client import BrowserApiClient
+        from nocfo.config import get_settings
 
-    async def _reconcile():
-        from nocfo.web_agent.browser import BrowserManager
+        settings = get_settings()
+        click.echo("Running reconciliation via browser API...")
+        with BrowserApiClient(
+            base_url=settings.browser_api_url,
+            token=settings.browser_api_token,
+        ) as client:
+            result = client.reconcile(account=1930, matches=[])
+        click.echo(f"Result: {result.get('status', 'unknown')}")
+        if result.get("matched"):
+            click.echo(f"  Matched: {result['matched']}/{result['total']}")
+    else:
+        click.echo("Bank reconciliation requires web agent. Starting...")
 
-        async with BrowserManager(headless=not headed) as browser:
-            await browser.new_page()
-            click.echo("Browser started. Reconciliation agent running...")
-            # TODO: Full pipeline - fetch transactions, run matching, apply via web agent
-            click.echo("Reconciliation pipeline not yet fully connected.")
-            return {"status": "not_implemented"}
+        async def _reconcile():
+            from nocfo.web_agent.browser import BrowserManager
 
-    result = run_async(_reconcile())
-    click.echo(f"Result: {result['status']}")
+            async with BrowserManager(headless=not headed) as browser:
+                await browser.new_page()
+                click.echo("Browser started. Reconciliation agent running...")
+                click.echo("Reconciliation pipeline not yet fully connected.")
+                return {"status": "not_implemented"}
+
+        result = run_async(_reconcile())
+        click.echo(f"Result: {result['status']}")
 
 
 @reconcile.command("status")
@@ -278,24 +293,38 @@ def close_check(month: str) -> None:
 
 @close.command("run")
 @click.argument("month")
-@click.option("--headed", is_flag=True, help="Run with visible browser")
-def close_run(month: str, headed: bool) -> None:
+@click.option("--headed", is_flag=True, help="Run with visible browser (legacy web agent)")
+@click.option("--browser-api", is_flag=True, default=True, help="Use browser API (default)")
+def close_run(month: str, headed: bool, browser_api: bool) -> None:
     """Execute period closing (format: YYYY-MM)."""
     period_end = parse_month(month)
 
-    click.echo(f"Closing period ending {period_end}...")
-    click.echo("This requires web agent. Starting browser...")
+    if browser_api:
+        from nocfo.browser.client import BrowserApiClient
+        from nocfo.config import get_settings
 
-    async def _close():
-        from nocfo.web_agent.browser import BrowserManager
-        from nocfo.web_agent.tasks.period_closing import run_period_closing
+        settings = get_settings()
+        click.echo(f"Closing period {month} via browser API...")
+        with BrowserApiClient(
+            base_url=settings.browser_api_url,
+            token=settings.browser_api_token,
+        ) as client:
+            result = client.close_period(month)
+        click.echo(f"Result: {result.get('status', 'unknown')} - {result.get('message', '')}")
+    else:
+        click.echo(f"Closing period ending {period_end}...")
+        click.echo("This requires web agent. Starting browser...")
 
-        async with BrowserManager(headless=not headed) as browser:
-            page = await browser.new_page()
-            return await run_period_closing(page, period_end)
+        async def _close():
+            from nocfo.web_agent.browser import BrowserManager
+            from nocfo.web_agent.tasks.period_closing import run_period_closing
 
-    result = run_async(_close())
-    click.echo(f"Result: {result['status']} - {result['message']}")
+            async with BrowserManager(headless=not headed) as browser:
+                page = await browser.new_page()
+                return await run_period_closing(page, period_end)
+
+        result = run_async(_close())
+        click.echo(f"Result: {result['status']} - {result['message']}")
 
 
 # --- Schedule commands ---
@@ -346,25 +375,140 @@ def schedule_status() -> None:
 @cli.command()
 @click.argument("report_type", type=click.Choice(["balance", "income"]))
 @click.option("--period", required=True, help="Report period (e.g. 2024-01)")
-@click.option("--headed", is_flag=True, help="Run with visible browser")
-def report(report_type: str, period: str, headed: bool) -> None:
+@click.option("--headed", is_flag=True, help="Run with visible browser (legacy web agent)")
+@click.option("--browser-api", is_flag=True, default=True, help="Use browser API (default)")
+def report(report_type: str, period: str, headed: bool, browser_api: bool) -> None:
     """Download a financial report."""
     type_map = {
         "balance": "Balansrapport",
         "income": "Resultatrapport",
     }
 
-    async def _download():
-        from nocfo.web_agent.browser import BrowserManager
-        from nocfo.web_agent.tasks.reports import run_report_download
+    if browser_api:
+        from nocfo.browser.client import BrowserApiClient
+        from nocfo.config import get_settings
 
-        async with BrowserManager(headless=not headed) as browser:
-            page = await browser.new_page()
-            return await run_report_download(page, type_map[report_type], period)
+        settings = get_settings()
+        click.echo(f"Downloading {type_map[report_type]} for {period} via browser API...")
+        with BrowserApiClient(
+            base_url=settings.browser_api_url,
+            token=settings.browser_api_token,
+        ) as client:
+            try:
+                file_bytes = client.download_report(report_type, period)
+                output_path = f"{type_map[report_type]}_{period}.pdf"
+                with open(output_path, "wb") as f:
+                    f.write(file_bytes)
+                click.echo(f"Report saved: {output_path} ({len(file_bytes)} bytes)")
+            except Exception as e:
+                click.echo(f"Error: {e}")
+                sys.exit(1)
+    else:
+        async def _download():
+            from nocfo.web_agent.browser import BrowserManager
+            from nocfo.web_agent.tasks.reports import run_report_download
 
-    click.echo(f"Downloading {type_map[report_type]} for {period}...")
-    result = run_async(_download())
-    click.echo(f"Result: {result['status']} - {result['message']}")
+            async with BrowserManager(headless=not headed) as browser:
+                page = await browser.new_page()
+                return await run_report_download(page, type_map[report_type], period)
+
+        click.echo(f"Downloading {type_map[report_type]} for {period}...")
+        result = run_async(_download())
+        click.echo(f"Result: {result['status']} - {result['message']}")
+
+
+# --- Browser commands ---
+
+
+@cli.group()
+def browser() -> None:
+    """Browser API management."""
+    pass
+
+
+@browser.command("start")
+@click.option("--headless", is_flag=True, help="Run Chrome headless")
+def browser_start(headless: bool) -> None:
+    """Launch Chrome and start the Browser API server."""
+    from nocfo.browser.chrome import is_cdp_reachable, launch_chrome
+    from nocfo.browser.server import run_server
+    from nocfo.config import get_settings
+
+    settings = get_settings()
+    port = int(settings.browser_api_url.split(":")[-1])
+    cdp_port = settings.browser_cdp_port
+
+    # Launch Chrome if not already running
+    if not is_cdp_reachable(cdp_port):
+        click.echo(f"Launching Chrome (CDP port {cdp_port})...")
+        launch_chrome(
+            port=cdp_port,
+            profile_dir=settings.browser_profile_dir,
+            headless=headless,
+        )
+    else:
+        click.echo(f"Chrome already running on CDP port {cdp_port}")
+
+    # Start the API server (blocking)
+    click.echo(f"Starting Browser API on port {port}...")
+    run_server(port=port, cdp_port=cdp_port, auth_token=settings.browser_api_token)
+
+
+@browser.command("status")
+def browser_status() -> None:
+    """Check if browser API is running and authenticated."""
+    from nocfo.browser.client import BrowserApiClient
+    from nocfo.config import get_settings
+
+    settings = get_settings()
+
+    try:
+        with BrowserApiClient(
+            base_url=settings.browser_api_url,
+            token=settings.browser_api_token,
+        ) as client:
+            health = client.health()
+
+        chrome_status = health.get("chrome", {})
+        session_status = health.get("session", {})
+
+        click.echo(f"Server: {health.get('status', 'unknown')}")
+        click.echo(f"Chrome CDP: {'connected' if chrome_status.get('cdp_reachable') else 'disconnected'}")
+        click.echo(f"Session: {'authenticated' if session_status.get('authenticated') else 'not authenticated'}")
+    except Exception as e:
+        click.echo(f"Browser API not reachable: {e}")
+        sys.exit(1)
+
+
+@browser.command("login")
+def browser_login() -> None:
+    """Trigger BankID login via the browser API."""
+    from nocfo.browser.client import BrowserApiClient
+    from nocfo.config import get_settings
+
+    settings = get_settings()
+
+    click.echo("Starting BankID login...")
+    click.echo("A QR code will appear in the Chrome window. Scan it with BankID.")
+
+    try:
+        with BrowserApiClient(
+            base_url=settings.browser_api_url,
+            token=settings.browser_api_token,
+            timeout=150.0,  # BankID login can take up to 120s
+        ) as client:
+            result = client.login()
+
+        status = result.get("status", "unknown")
+        if status == "authenticated":
+            click.echo("Login successful!")
+        elif status == "timeout":
+            click.echo("Login timed out. Please try again.")
+        else:
+            click.echo(f"Login result: {status} - {result.get('message', '')}")
+    except Exception as e:
+        click.echo(f"Login failed: {e}")
+        sys.exit(1)
 
 
 # --- Approve command ---

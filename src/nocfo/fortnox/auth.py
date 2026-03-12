@@ -14,10 +14,7 @@ from nocfo.storage.tokens import TokenStore
 
 logger = structlog.get_logger()
 
-SCOPES = (
-    "bookkeeping supplierinvoice invoice payment settings "
-    "companyinformation customer supplier inbox connectfile"
-)
+SCOPES = "companyinformation"
 
 
 def _make_callback_handler(result: dict[str, str | None]):
