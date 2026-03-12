@@ -19,36 +19,34 @@ class SelectorSet(BaseModel):
     name: str | None = None
     placeholder: str | None = None
     semantic: str | None = None
+    container_selector: str | None = None
+    container_role: str | None = None
+    scoped_css_path: str | None = None
 
-    def best(self) -> str | None:
-        """Return the most robust selector in priority order."""
-        priority = [
+    def _priority(self) -> list[tuple[str | None, object]]:
+        return [
             (self.data_testid, lambda v: f'[data-testid="{v}"]'),
             (self.id, lambda v: f"#{v}"),
             (self.aria, lambda v: v),
             (self.name, lambda v: f'[name="{v}"]'),
+            (self.scoped_css_path, lambda v: v),
+            (self.placeholder, lambda v: f'[placeholder="{v}"]'),
             (self.text, lambda v: f'text="{v}"'),
             (self.css_path, lambda v: v),
             (self.nth_child, lambda v: v),
         ]
-        for value, transform in priority:
+
+    def best(self) -> str | None:
+        """Return the most robust selector in priority order."""
+        for value, transform in self._priority():
             if value:
                 return transform(value)
         return None
 
     def all_selectors(self) -> list[str]:
         """Return all non-null selectors in priority order."""
-        priority = [
-            (self.data_testid, lambda v: f'[data-testid="{v}"]'),
-            (self.id, lambda v: f"#{v}"),
-            (self.aria, lambda v: v),
-            (self.name, lambda v: f'[name="{v}"]'),
-            (self.text, lambda v: f'text="{v}"'),
-            (self.css_path, lambda v: v),
-            (self.nth_child, lambda v: v),
-        ]
         result = []
-        for value, transform in priority:
+        for value, transform in self._priority():
             if value:
                 result.append(transform(value))
         return result

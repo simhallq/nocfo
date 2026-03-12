@@ -43,19 +43,39 @@ class TestSelectorSet:
         s = SelectorSet()
         assert s.best() is None
 
+    def test_best_returns_scoped_css_before_text(self):
+        s = SelectorSet(
+            scoped_css_path='[role="dialog"] section > button',
+            text="OK",
+            css_path="div > button",
+        )
+        assert s.best() == '[role="dialog"] section > button'
+
+    def test_best_returns_placeholder(self):
+        s = SelectorSet(placeholder="Search...", css_path="div > input")
+        assert s.best() == '[placeholder="Search..."]'
+
     def test_all_selectors_order(self):
         s = SelectorSet(
             data_testid="x",
             id="y",
             name="z",
+            scoped_css_path='[role="dialog"] div > span',
+            placeholder="hint",
+            text="label",
             css_path="div > span",
+            nth_child="div > span:nth-child(1)",
         )
         result = s.all_selectors()
         assert result == [
             '[data-testid="x"]',
             "#y",
             '[name="z"]',
+            '[role="dialog"] div > span',
+            '[placeholder="hint"]',
+            'text="label"',
             "div > span",
+            "div > span:nth-child(1)",
         ]
 
     def test_all_selectors_empty(self):
@@ -154,6 +174,9 @@ class TestWorkflow:
                         nth_child="form > button:nth-child(2)",
                         placeholder="Enter value",
                         semantic="Submit button in the login form",
+                        container_selector='[data-testid="login-modal"]',
+                        container_role="dialog",
+                        scoped_css_path='[data-testid="login-modal"] form > button.submit',
                     ),
                 ),
             ],
@@ -173,3 +196,6 @@ class TestWorkflow:
         assert s.nth_child == "form > button:nth-child(2)"
         assert s.placeholder == "Enter value"
         assert s.semantic == "Submit button in the login form"
+        assert s.container_selector == '[data-testid="login-modal"]'
+        assert s.container_role == "dialog"
+        assert s.scoped_css_path == '[data-testid="login-modal"] form > button.submit'

@@ -106,6 +106,16 @@ class ReplayEngine:
                     step=step.step, action="navigate", success=False, error=str(e)
                 )
 
+        # Wait for container (modal/dialog) before trying selectors
+        container = step.selectors.container_selector
+        if container:
+            try:
+                self._page.wait_for_selector(
+                    container, state="visible", timeout=15000
+                )
+            except Exception:
+                logger.warning("container_wait_failed", container=container)
+
         # Try selectors in priority order
         selectors = step.selectors.all_selectors()
         if not selectors:

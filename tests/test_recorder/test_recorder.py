@@ -38,7 +38,10 @@ class TestWorkflowRecorder:
         mock_page.expose_function.assert_called_once()
         assert mock_page.expose_function.call_args[0][0] == "__nocfo_record_event"
         mock_page.evaluate.assert_called_once()
-        mock_page.on.assert_called_once_with("load", pytest.approx(mock_page.on.call_args[0][1]))
+        # Registers both "load" and "frameattached" listeners
+        assert mock_page.on.call_count == 2
+        on_calls = {call[0][0] for call in mock_page.on.call_args_list}
+        assert on_calls == {"load", "frameattached"}
 
     def test_on_event_creates_step(self, recorder, mock_page):
         recorder.start()
@@ -54,6 +57,7 @@ class TestWorkflowRecorder:
         })
 
         recorder._on_event(event)
+        recorder.process_pending()
 
         assert len(recorder.steps) == 1
         step = recorder.steps[0]
@@ -75,6 +79,7 @@ class TestWorkflowRecorder:
         })
 
         recorder._on_event(event)
+        recorder.process_pending()
         mock_page.screenshot.assert_called_once()
 
     def test_on_event_handles_screenshot_failure(self, recorder, mock_page):
@@ -92,6 +97,7 @@ class TestWorkflowRecorder:
 
         # Should not raise
         recorder._on_event(event)
+        recorder.process_pending()
         assert len(recorder.steps) == 1
         assert recorder.steps[0].screenshot is None
 
@@ -107,6 +113,7 @@ class TestWorkflowRecorder:
             "timestamp": "2026-01-15T10:30:00",
         })
         recorder._on_event(event1)
+        recorder.process_pending()
 
         # The second event will have a non-zero wait_before_ms
         event2 = json.dumps({
@@ -118,6 +125,7 @@ class TestWorkflowRecorder:
             "timestamp": "2026-01-15T10:30:01",
         })
         recorder._on_event(event2)
+        recorder.process_pending()
 
         assert len(recorder.steps) == 2
         # First step always has 0 wait
@@ -136,11 +144,13 @@ class TestWorkflowRecorder:
             "timestamp": "2026-01-15T10:30:00",
         })
         recorder._on_event(event)
+        recorder.process_pending()
         assert len(recorder.steps) == 0
 
     def test_on_event_handles_invalid_json(self, recorder, mock_page):
         recorder.start()
         recorder._on_event("not valid json {{{")
+        recorder.process_pending()
         assert len(recorder.steps) == 0
 
     def test_stop_saves_yaml(self, recorder, mock_page, tmp_path):
@@ -155,6 +165,7 @@ class TestWorkflowRecorder:
             "timestamp": "2026-01-15T10:30:00",
         })
         recorder._on_event(event)
+        recorder.process_pending()
 
         workflow = recorder.stop()
 
@@ -179,6 +190,8 @@ class TestWorkflowRecorder:
             })
             recorder._on_event(event)
 
+        recorder.process_pending()
+
         assert len(recorder.steps) == 5
         for i, step in enumerate(recorder.steps):
             assert step.step == i + 1
@@ -196,6 +209,7 @@ class TestWorkflowRecorder:
             "timestamp": "2026-01-15T10:30:00",
         })
         recorder._on_event(event)
+        recorder.process_pending()
 
         step = recorder.steps[0]
         assert step.action == "fill"

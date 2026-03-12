@@ -1,6 +1,7 @@
 """WorkflowRecorder — captures browser interactions into a replayable workflow."""
 
 import json
+import queue
 import time
 from datetime import datetime
 from pathlib import Path
@@ -8,7 +9,7 @@ from pathlib import Path
 import structlog
 from playwright.sync_api import Page
 
-from .injector import inject_recorder, reinject_js
+from .injector import RECORDER_JS_MAIN, inject_recorder, reinject_js
 from .models import SelectorSet, Workflow, WorkflowStep
 
 logger = structlog.get_logger()
@@ -34,6 +35,7 @@ class WorkflowRecorder:
         self._start_url = ""
         self._last_event_time: float | None = None
         self._recording = False
+        self._event_queue: queue.Queue[tuple[str, float]] = queue.Queue()
 
     @property
     def steps(self) -> list[WorkflowStep]:
@@ -47,8 +49,17 @@ class WorkflowRecorder:
 
         inject_recorder(self._page, self._on_event)
         self._page.on("load", lambda: reinject_js(self._page))
+        self._page.on("frameattached", self._on_frame_attached)
 
         logger.info("recording_started", name=self._name, url=self._start_url)
+
+    def _on_frame_attached(self, frame) -> None:
+        """Inject recorder JS into newly attached frames."""
+        try:
+            frame.wait_for_load_state("domcontentloaded", timeout=5000)
+            frame.evaluate(RECORDER_JS_MAIN)
+        except Exception:
+            pass
 
     def stop(self) -> Workflow:
         """Stop recording and save the workflow."""
@@ -85,21 +96,40 @@ class WorkflowRecorder:
         return workflow
 
     def _on_event(self, event_json: str) -> None:
-        """Handle an interaction event from the injected JS."""
+        """Handle an interaction event from the injected JS.
+
+        This is called from within Playwright's expose_function callback,
+        so it must NOT call any sync Playwright APIs (deadlock risk).
+        Instead, enqueue the raw event for later processing.
+        """
         if not self._recording:
             return
+        self._event_queue.put((event_json, time.monotonic()))
 
+    def process_pending(self) -> None:
+        """Drain the event queue and process each event.
+
+        Must be called from the main thread where sync Playwright calls are safe.
+        """
+        while not self._event_queue.empty():
+            try:
+                event_json, event_time = self._event_queue.get_nowait()
+            except queue.Empty:
+                break
+            self._process_event(event_json, event_time)
+
+    def _process_event(self, event_json: str, event_time: float) -> None:
+        """Process a single recorded event: parse JSON, screenshot, create step."""
         try:
             data = json.loads(event_json)
         except json.JSONDecodeError:
             logger.warning("invalid_event_json", raw=event_json[:200])
             return
 
-        now = time.monotonic()
         wait_ms = 0
         if self._last_event_time is not None:
-            wait_ms = int((now - self._last_event_time) * 1000)
-        self._last_event_time = now
+            wait_ms = int((event_time - self._last_event_time) * 1000)
+        self._last_event_time = event_time
 
         step_num = len(self._steps) + 1
 

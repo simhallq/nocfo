@@ -304,6 +304,61 @@ class TestReplayEngine:
         assert result.passed == 3
         assert result.failed == 0
 
+    def test_container_wait_before_selectors(self, mock_page):
+        """When step has container_selector, wait for it before trying selectors."""
+        workflow = make_workflow(
+            [
+                WorkflowStep(
+                    step=1,
+                    action="click",
+                    selectors=SelectorSet(
+                        id="ok-btn",
+                        container_selector='[role="dialog"]',
+                    ),
+                ),
+            ]
+        )
+
+        engine = ReplayEngine(workflow, mock_page)
+        result = engine.run()
+
+        assert result.success
+        # First call should be the container wait, second the element wait
+        calls = mock_page.wait_for_selector.call_args_list
+        assert calls[0][0][0] == '[role="dialog"]'
+        assert calls[0][1]["timeout"] == 15000
+        assert calls[1][0][0] == "#ok-btn"
+
+    def test_container_wait_failure_still_tries_selectors(self, mock_page):
+        """If container wait times out, selectors are still attempted."""
+        call_count = [0]
+
+        def side_effect(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise Exception("timeout waiting for container")
+
+        mock_page.wait_for_selector.side_effect = side_effect
+
+        workflow = make_workflow(
+            [
+                WorkflowStep(
+                    step=1,
+                    action="click",
+                    selectors=SelectorSet(
+                        id="ok-btn",
+                        container_selector='[role="dialog"]',
+                    ),
+                ),
+            ]
+        )
+
+        engine = ReplayEngine(workflow, mock_page)
+        result = engine.run()
+
+        assert result.success
+        assert result.step_results[0].selector_used == "#ok-btn"
+
     def test_replay_result_properties(self, mock_page):
         workflow = make_workflow([], start_url="")
         engine = ReplayEngine(workflow, mock_page)

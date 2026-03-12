@@ -434,11 +434,17 @@ def record_start(name: str, url: str | None, enhance: bool, cdp_url: str) -> Non
         # Handle both Ctrl+C (SIGINT) and SIGTERM for clean shutdown
         signal.signal(signal.SIGTERM, _request_stop)
 
+        import time as _time
+
         try:
             while not stop_requested:
-                page.wait_for_timeout(500)
+                _time.sleep(0.5)
+                recorder.process_pending()
         except KeyboardInterrupt:
             pass
+
+        # Drain any final events before stopping
+        recorder.process_pending()
 
         workflow = recorder.stop()
         click.echo(f"\nRecording saved: {workflow.total_steps} steps")
@@ -448,7 +454,10 @@ def record_start(name: str, url: str | None, enhance: bool, cdp_url: str) -> Non
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
     finally:
-        pw.stop()
+        try:
+            pw.stop()
+        except Exception:
+            pass
 
 
 @record.command("replay")
@@ -550,6 +559,58 @@ def record_show(name: str) -> None:
         value_str = f" = {step.value!r}" if step.value else ""
         wait_str = f" (wait {step.wait_before_ms}ms)" if step.wait_before_ms else ""
         click.echo(f"  {step.step:>3}. [{step.action:<6}] {selector}{value_str}{wait_str}")
+
+
+@cli.command("svd-invoice")
+@click.option("--speed", default=1.0, type=float, help="Replay speed multiplier")
+@click.option("--cdp-url", default="http://localhost:9222", help="Chrome DevTools Protocol URL")
+def svd_invoice(speed: float, cdp_url: str) -> None:
+    """Download the latest invoice from SvD (replays recorded workflow)."""
+    from playwright.sync_api import sync_playwright
+
+    from nocfo.config import get_settings
+    from nocfo.recorder.models import Workflow
+    from nocfo.recorder.replay import ReplayEngine
+
+    settings = get_settings()
+    yaml_path = settings.workflows_dir / "get_svd_invoice.yaml"
+
+    if not yaml_path.exists():
+        click.echo(
+            f"Workflow not found: {yaml_path}\n"
+            "Record it first: nocfo record start get_svd_invoice "
+            "--url https://www.svd.se/minsida",
+            err=True,
+        )
+        sys.exit(1)
+
+    workflow = Workflow.from_yaml(yaml_path)
+    click.echo(f"Replaying SvD invoice download ({workflow.total_steps} steps)...")
+
+    pw = sync_playwright().start()
+    try:
+        browser = pw.chromium.connect_over_cdp(cdp_url)
+        context = browser.contexts[0] if browser.contexts else browser.new_context()
+        page = context.pages[0] if context.pages else context.new_page()
+
+        engine = ReplayEngine(workflow, page, speed=speed, strict=True)
+        result = engine.run()
+
+        click.echo(f"\nDone: {result.passed}/{result.total_steps} steps passed")
+        if result.failed:
+            for sr in result.step_results:
+                if not sr.success:
+                    click.echo(f"  Step {sr.step} ({sr.action}): {sr.error}")
+            sys.exit(1)
+
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    finally:
+        try:
+            pw.stop()
+        except Exception:
+            pass
 
 
 @record.command("enhance")
