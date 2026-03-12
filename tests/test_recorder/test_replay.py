@@ -1,11 +1,11 @@
 """Tests for ReplayEngine with mocked Page."""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from nocfo.recorder.models import SelectorSet, Workflow, WorkflowStep
-from nocfo.recorder.replay import ReplayEngine
+from nocfo.recorder.replay import ReplayEngine, StepResult
 
 
 @pytest.fixture
@@ -367,3 +367,125 @@ class TestReplayEngine:
         assert result.success
         assert result.workflow_name == "test"
         assert result.total_steps == 0
+
+
+class TestVisionFallbackIntegration:
+    def test_vision_not_called_when_disabled(self, mock_page):
+        """Vision fallback should not be attempted when vision_fallback=False."""
+        mock_page.wait_for_selector.side_effect = Exception("not found")
+
+        workflow = make_workflow(
+            [WorkflowStep(step=1, action="click", selectors=SelectorSet(id="gone"))]
+        )
+
+        with patch(
+            "nocfo.recorder.vision_fallback.vision_fallback_step"
+        ) as mock_vision:
+            engine = ReplayEngine(workflow, mock_page, vision_fallback=False)
+            result = engine.run()
+
+            mock_vision.assert_not_called()
+            assert not result.success
+
+    def test_vision_called_after_selector_failure(self, mock_page):
+        """Vision fallback should be called when selectors fail and vision is enabled."""
+        mock_page.wait_for_selector.side_effect = Exception("not found")
+
+        workflow = make_workflow(
+            [WorkflowStep(step=1, action="click", selectors=SelectorSet(id="gone"))]
+        )
+
+        vision_result = StepResult(
+            step=1,
+            action="click",
+            success=True,
+            selector_used="vision(100,200)",
+            fallback_used="vision",
+        )
+
+        with patch(
+            "nocfo.recorder.vision_fallback.vision_fallback_step",
+            return_value=vision_result,
+        ) as mock_vision:
+            engine = ReplayEngine(workflow, mock_page, vision_fallback=True)
+            result = engine.run()
+
+            mock_vision.assert_called_once()
+            assert result.success
+            assert result.step_results[0].fallback_used == "vision"
+
+    def test_vision_called_when_no_selectors(self, mock_page):
+        """Vision fallback should be tried even when there are no selectors."""
+        workflow = make_workflow(
+            [WorkflowStep(step=1, action="click", selectors=SelectorSet())]
+        )
+
+        vision_result = StepResult(
+            step=1,
+            action="click",
+            success=True,
+            selector_used="vision(50,60)",
+            fallback_used="vision",
+        )
+
+        with patch(
+            "nocfo.recorder.vision_fallback.vision_fallback_step",
+            return_value=vision_result,
+        ) as mock_vision:
+            engine = ReplayEngine(workflow, mock_page, vision_fallback=True)
+            result = engine.run()
+
+            mock_vision.assert_called_once()
+            assert result.success
+
+    def test_max_vision_fallbacks_budget(self, mock_page):
+        """Vision fallback should stop after max_vision_fallbacks attempts."""
+        mock_page.wait_for_selector.side_effect = Exception("not found")
+
+        workflow = make_workflow(
+            [
+                WorkflowStep(step=i, action="click", selectors=SelectorSet(id=f"s{i}"))
+                for i in range(1, 5)
+            ]
+        )
+
+        vision_result = StepResult(
+            step=0, action="click", success=True, fallback_used="vision"
+        )
+
+        call_count = [0]
+
+        def counted_vision(*args, **kwargs):
+            call_count[0] += 1
+            return StepResult(
+                step=args[1].step,
+                action="click",
+                success=True,
+                fallback_used="vision",
+            )
+
+        with patch(
+            "nocfo.recorder.vision_fallback.vision_fallback_step",
+            side_effect=counted_vision,
+        ):
+            engine = ReplayEngine(
+                workflow, mock_page, vision_fallback=True, max_vision_fallbacks=2, strict=False
+            )
+            result = engine.run()
+
+            # Only 2 vision calls should happen (budget of 2)
+            assert call_count[0] == 2
+            # 2 passed via vision, 2 failed (no budget left)
+            assert result.passed == 2
+            assert result.failed == 2
+
+    def test_fallback_used_field_on_step_result(self, mock_page):
+        """StepResult should have empty fallback_used by default."""
+        workflow = make_workflow(
+            [WorkflowStep(step=1, action="click", selectors=SelectorSet(id="btn"))]
+        )
+
+        engine = ReplayEngine(workflow, mock_page)
+        result = engine.run()
+
+        assert result.step_results[0].fallback_used == ""

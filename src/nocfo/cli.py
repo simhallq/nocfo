@@ -467,8 +467,11 @@ def record_start(name: str, url: str | None, enhance: bool, cdp_url: str) -> Non
 @click.argument("name")
 @click.option("--speed", default=1.0, type=float, help="Replay speed multiplier")
 @click.option("--strict/--no-strict", default=True, help="Stop on first failure")
+@click.option("--vision-fallback", is_flag=True, help="Use Claude vision when selectors fail")
 @click.option("--cdp-url", default="http://localhost:9222", help="Chrome DevTools Protocol URL")
-def record_replay(name: str, speed: float, strict: bool, cdp_url: str) -> None:
+def record_replay(
+    name: str, speed: float, strict: bool, vision_fallback: bool, cdp_url: str
+) -> None:
     """Replay a recorded workflow."""
     from playwright.sync_api import sync_playwright
 
@@ -477,6 +480,13 @@ def record_replay(name: str, speed: float, strict: bool, cdp_url: str) -> None:
     from nocfo.recorder.replay import ReplayEngine
 
     settings = get_settings()
+
+    if vision_fallback and not settings.validate_anthropic_key():
+        click.echo(
+            "Error: ANTHROPIC_API_KEY must be set for --vision-fallback", err=True
+        )
+        sys.exit(1)
+
     yaml_path = settings.workflows_dir / f"{name}.yaml"
 
     if not yaml_path.exists():
@@ -484,7 +494,10 @@ def record_replay(name: str, speed: float, strict: bool, cdp_url: str) -> None:
         sys.exit(1)
 
     workflow = Workflow.from_yaml(yaml_path)
-    click.echo(f"Replaying '{name}' ({workflow.total_steps} steps, speed={speed}x)...")
+    mode = " +vision" if vision_fallback else ""
+    click.echo(
+        f"Replaying '{name}' ({workflow.total_steps} steps, speed={speed}x{mode})..."
+    )
 
     pw = sync_playwright().start()
     try:
@@ -492,10 +505,15 @@ def record_replay(name: str, speed: float, strict: bool, cdp_url: str) -> None:
         context = browser.contexts[0] if browser.contexts else browser.new_context()
         page = context.pages[0] if context.pages else context.new_page()
 
-        engine = ReplayEngine(workflow, page, speed=speed, strict=strict)
+        engine = ReplayEngine(
+            workflow, page, speed=speed, strict=strict, vision_fallback=vision_fallback
+        )
         result = engine.run()
 
         click.echo(f"\nReplay complete: {result.passed}/{result.total_steps} passed")
+        for sr in result.step_results:
+            if sr.success and sr.fallback_used:
+                click.echo(f"  Step {sr.step} [OK via {sr.fallback_used}] {sr.action}")
         if result.failed:
             click.echo(f"  Failed steps: {result.failed}")
             for sr in result.step_results:

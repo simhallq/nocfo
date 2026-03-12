@@ -169,6 +169,30 @@ class TestWorkflow:
         workflow.to_yaml(yaml_path)
         assert yaml_path.exists()
 
+    def test_description_yaml_round_trip(self, tmp_path: Path):
+        workflow = Workflow(
+            name="with_desc",
+            total_steps=0,
+            description="Logs into the admin portal and downloads the invoice.",
+        )
+
+        yaml_path = tmp_path / "desc.yaml"
+        workflow.to_yaml(yaml_path)
+        loaded = Workflow.from_yaml(yaml_path)
+
+        assert loaded.description == "Logs into the admin portal and downloads the invoice."
+
+    def test_description_none_by_default(self):
+        workflow = Workflow(name="no_desc", total_steps=0)
+        assert workflow.description is None
+
+    def test_yaml_without_description_loads(self, tmp_path: Path):
+        """Existing YAML files without description field should load fine."""
+        yaml_path = tmp_path / "old.yaml"
+        yaml_path.write_text("name: old_flow\ntotal_steps: 0\nsteps: []\n")
+        loaded = Workflow.from_yaml(yaml_path)
+        assert loaded.description is None
+
     def test_round_trip_preserves_selectors(self, tmp_path: Path):
         workflow = Workflow(
             name="selectors_test",

@@ -19,6 +19,7 @@ class StepResult:
     success: bool
     selector_used: str = ""
     error: str = ""
+    fallback_used: str = ""
 
 
 @dataclass
@@ -45,11 +46,16 @@ class ReplayEngine:
         page: Page,
         speed: float = 1.0,
         strict: bool = True,
+        vision_fallback: bool = False,
+        max_vision_fallbacks: int = 10,
     ) -> None:
         self._workflow = workflow
         self._page = page
         self._speed = speed
         self._strict = strict
+        self._vision_fallback = vision_fallback
+        self._max_vision_fallbacks = max_vision_fallbacks
+        self._vision_count = 0
 
     def run(self) -> ReplayResult:
         """Execute all steps in the workflow."""
@@ -119,6 +125,15 @@ class ReplayEngine:
         # Try selectors in priority order
         selectors = step.selectors.all_selectors()
         if not selectors:
+            if self._vision_fallback and self._vision_count < self._max_vision_fallbacks:
+                from .vision_fallback import vision_fallback_step
+
+                self._vision_count += 1
+                vision_result = vision_fallback_step(
+                    self._page, step, self._workflow.description
+                )
+                if vision_result.success:
+                    return vision_result
             return StepResult(
                 step=step.step,
                 action=step.action,
@@ -146,6 +161,18 @@ class ReplayEngine:
             except Exception as e:
                 last_error = str(e)
                 continue
+
+        # Vision fallback: use Claude to find the element by screenshot
+        if self._vision_fallback and self._vision_count < self._max_vision_fallbacks:
+            from .vision_fallback import vision_fallback_step
+
+            logger.info("vision_fallback_attempt", step=step.step)
+            self._vision_count += 1
+            vision_result = vision_fallback_step(
+                self._page, step, self._workflow.description
+            )
+            if vision_result.success:
+                return vision_result
 
         return StepResult(
             step=step.step,

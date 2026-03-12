@@ -87,6 +87,7 @@ class Workflow(BaseModel):
     name: str
     recorded_at: datetime = Field(default_factory=datetime.now)
     start_url: str = ""
+    description: str | None = None
     total_steps: int = 0
     steps: list[WorkflowStep] = Field(default_factory=list)
 
