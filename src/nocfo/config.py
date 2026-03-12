@@ -27,6 +27,9 @@ class Settings(BaseSettings):
         default="http://localhost:8888/callback", description="OAuth redirect URI"
     )
     oauth_redirect_port: int = Field(default=8888, description="OAuth redirect server port")
+    workflows_dir: Path = Field(
+        default=Path("data/workflows"), description="Directory for recorded workflow YAML files"
+    )
 
     def validate_fortnox_credentials(self) -> bool:
         """Check that Fortnox credentials are configured."""
