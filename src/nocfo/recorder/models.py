@@ -1,10 +1,17 @@
 """Pydantic models for workflow recording."""
 
+import re
 from datetime import datetime
 from pathlib import Path
 
 import yaml
 from pydantic import BaseModel, Field
+
+# IDs that look auto-generated: contain UUIDs, hex hashes, React-style _r_XX_
+_UNSTABLE_ID_RE = re.compile(
+    r"^_r_|[0-9a-f]{8}-[0-9a-f]{4}-|^[0-9a-f]{12,}$|^:r",
+    re.IGNORECASE,
+)
 
 
 class SelectorSet(BaseModel):
@@ -23,10 +30,17 @@ class SelectorSet(BaseModel):
     container_role: str | None = None
     scoped_css_path: str | None = None
 
+    @property
+    def _stable_id(self) -> str | None:
+        """Return id only if it looks human-authored, not auto-generated."""
+        if self.id and not _UNSTABLE_ID_RE.search(self.id):
+            return self.id
+        return None
+
     def _priority(self) -> list[tuple[str | None, object]]:
         return [
             (self.data_testid, lambda v: f'[data-testid="{v}"]'),
-            (self.id, lambda v: f"#{v}"),
+            (self._stable_id, lambda v: f"#{v}"),
             (self.aria, lambda v: v),
             (self.name, lambda v: f'[name="{v}"]'),
             (self.scoped_css_path, lambda v: v),

@@ -39,6 +39,19 @@ class TestSelectorSet:
         s = SelectorSet(nth_child="div > button:nth-child(3)")
         assert s.best() == "div > button:nth-child(3)"
 
+    def test_best_skips_unstable_ids(self):
+        # React-style _r_XX_ IDs
+        s = SelectorSet(id="_r_1h_", text="Settings", css_path="a#_r_1h_")
+        assert s.best() == 'text="Settings"'
+
+        # UUID-style IDs
+        s = SelectorSet(id="item-c82fb730-da40-4e12-b5f4-4fb36e632de8", text="Billing")
+        assert s.best() == 'text="Billing"'
+
+        # Stable IDs still work
+        s = SelectorSet(id="submit-btn", text="Submit")
+        assert s.best() == "#submit-btn"
+
     def test_best_returns_none_when_empty(self):
         s = SelectorSet()
         assert s.best() is None
