@@ -420,7 +420,7 @@ def record_start(name: str, url: str | None, enhance: bool, cdp_url: str) -> Non
         page = context.pages[0] if context.pages else context.new_page()
 
         if url:
-            page.goto(url, wait_until="networkidle", timeout=30000)
+            page.goto(url, wait_until="domcontentloaded", timeout=30000)
 
         recorder = WorkflowRecorder(
             name=name,
