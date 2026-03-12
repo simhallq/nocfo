@@ -124,7 +124,7 @@ class TestReplayEngine:
 
         assert result.success
         mock_page.goto.assert_called_with(
-            "https://example.com/page2", wait_until="networkidle", timeout=30000
+            "https://example.com/page2", wait_until="domcontentloaded", timeout=30000
         )
 
     def test_replay_navigates_to_start_url(self, mock_page):
@@ -137,7 +137,7 @@ class TestReplayEngine:
         engine.run()
 
         mock_page.goto.assert_called_once_with(
-            "https://example.com/start", wait_until="networkidle", timeout=30000
+            "https://example.com/start", wait_until="domcontentloaded", timeout=30000
         )
 
     def test_selector_fallback(self, mock_page):

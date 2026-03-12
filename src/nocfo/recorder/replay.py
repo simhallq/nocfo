@@ -62,7 +62,7 @@ class ReplayEngine:
         if self._workflow.start_url:
             logger.info("replay_navigating", url=self._workflow.start_url)
             self._page.goto(
-                self._workflow.start_url, wait_until="networkidle", timeout=30000
+                self._workflow.start_url, wait_until="domcontentloaded", timeout=30000
             )
 
         for step in self._workflow.steps:
@@ -99,7 +99,7 @@ class ReplayEngine:
         # Handle navigation action
         if step.action == "navigate" and step.url:
             try:
-                self._page.goto(step.url, wait_until="networkidle", timeout=30000)
+                self._page.goto(step.url, wait_until="domcontentloaded", timeout=30000)
                 return StepResult(step=step.step, action="navigate", success=True)
             except Exception as e:
                 return StepResult(
@@ -169,6 +169,6 @@ class ReplayEngine:
 
         # Wait for potential navigation/network activity
         try:
-            self._page.wait_for_load_state("networkidle", timeout=5000)
+            self._page.wait_for_load_state("domcontentloaded", timeout=5000)
         except Exception:
             pass  # Timeout on networkidle is non-fatal
