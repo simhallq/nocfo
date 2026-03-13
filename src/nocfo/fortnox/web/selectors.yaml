@@ -1,0 +1,152 @@
+# Fortnox UI selectors — discovered from live Fortnox DOM (March 2026).
+#
+# Architecture:
+#   - Outer shell: apps2.fortnox.se/app/{tenant}/... — header, navigation, floating drawers
+#   - Inner iframe "iframeApp": apps2.fortnox.se/webapp-ui/{tenant}?container#... — all legacy content
+#   - Settings items, accounting views, reconciliation etc. are all inside the iframe
+#   - Reports drawer is in the outer page shell (requires JS clicks due to viewport issues)
+
+login:
+  bankid_tab:
+    description: "the BankID login tab or button on id.fortnox.se"
+    selectors:
+      - "button:has-text('BankID')"
+      - "text=Mobilt BankID"
+      - "a:has-text('BankID')"
+  bankid_qr_button:
+    description: "the 'BankID med QR-kod' button to show the QR code"
+    selectors:
+      - "button:has-text('BankID med QR-kod')"
+      - "button:has-text('QR-kod')"
+      - "a:has-text('QR-kod')"
+  qr_image:
+    description: "the BankID QR code image or canvas"
+    selectors:
+      - "img[alt*='QR']"
+      - "canvas"
+      - "[class*='qr']"
+  login_form:
+    description: "the main login form on id.fortnox.se"
+    selectors:
+      - "form[action*='login']"
+      - "form"
+
+tenant_select:
+  tenant_option:
+    description: "a tenant/company option in the tenant selection list"
+    selectors:
+      - "#tenant-option-{user_id}-{tenant_id}"
+      - "a[id^='tenant-option']:has-text('{company_name}')"
+
+navigation:
+  hamburger_menu:
+    description: "the hamburger Meny button in the top-left header"
+    selectors:
+      - ".HamburgerMenu__navigationButton__SWFYO"
+      - "div:has-text('Meny') >> nth=0"
+  menu_item:
+    description: "a sidebar menu item when hamburger menu is open (Bokföring, Leverantörsfakturor, etc.)"
+    selectors:
+      - ".NavigationMenu__navigationMenu__bb4-P a:has-text('{text}')"
+      - "a:has-text('{text}')"
+  settings_gear:
+    description: "the gear/settings dropdown trigger in the header"
+    selectors:
+      - ".MenuDropdown__headerDropdownContainer__XLb41.settings .MenuDropdown__dropdownBtn__GzZT7"
+  settings_dropdown_item:
+    description: "an item in the gear/settings dropdown"
+    selectors:
+      - "a.DropDownItem__dropDownItem__lwKdB:has-text('{text}')"
+  logo_home:
+    description: "the Fortnox logo link that navigates to the lobby"
+    selectors:
+      - "a.Header__smallerLogo__mfhNp"
+      - "a[href*='/common/lobby']"
+  reports_header_link:
+    description: "the Rapporter link in the top header bar (requires JS click)"
+    selectors:
+      - "a[data-loglabel='reports-menu-item']"
+
+# Reports floating drawer (outer page, NOT in iframe)
+reports:
+  reports_panel:
+    description: "the floating reports drawer/panel"
+    selectors:
+      - "aside.FloatingDrawer__dock__GikyW:has-text('Rapporter')"
+  all_reports_tab:
+    description: "the 'Alla rapporter' tab within the reports panel"
+    selectors:
+      - "a[aria-label='Alla rapporter']"
+  report_list:
+    description: "the container holding report type links"
+    selectors:
+      - ".ReportState__report-link-list__KQ6HE"
+  close_panel:
+    description: "the close button for the reports panel"
+    selectors:
+      - "button[data-test-id='close-button']"
+      - "button[aria-label='Stäng']"
+
+# Settings page — items are inside iframeApp as .form-expander-control
+settings_page:
+  setting_item:
+    description: "an expandable settings item in the iframe (e.g. Automatkontering, Låsning av period)"
+    selectors:
+      - ".form-expander-control:has-text('{text}')"
+
+# Bokföring section — inside iframeApp, accessed via /bf/voucherlist
+bokforing:
+  tab:
+    description: "a view tab in the Bokföring section (Verifikationer, Stäm av konto, etc.)"
+    selectors:
+      - "a[data-viewid='{viewid}']"
+      - "a.view-tab:has-text('{text}')"
+
+# Reconciliation (Stäm av konto) — inside iframeApp under Bokföring
+reconciliation:
+  tab:
+    description: "the Stäm av konto tab in the Bokföring section"
+    selectors:
+      - "a[data-viewid='voucherreconcile']"
+  account_input:
+    description: "the account number input field"
+    selectors:
+      - "#form-voucherreconcile-account"
+  from_date:
+    description: "the from date input for reconciliation period"
+    selectors:
+      - "#form-voucherreconcile-fromDate"
+  to_date:
+    description: "the to date input for reconciliation period"
+    selectors:
+      - "#form-voucherreconcile-toDate"
+  search_button:
+    description: "the search button to load transactions"
+    selectors:
+      - "button.js-voucherreconcile-search"
+  save_button:
+    description: "the save/reconcile button"
+    selectors:
+      - "button.js-save"
+  abort_button:
+    description: "the abort/cancel button"
+    selectors:
+      - "button.js-abort"
+  mass_reconcile:
+    description: "the mass reconciliation button"
+    selectors:
+      - "button.js-mass-reconcile"
+
+# Rules (Automatkontering) — inside iframeApp settings expander
+rules:
+  page_link:
+    description: "the Automatkontering expander in settings (inside iframe)"
+    selectors:
+      - ".form-expander-control:has-text('Automatkontering')"
+
+# Period closing (Låsning av period) — inside iframeApp settings expander
+period_closing:
+  page_link:
+    description: "the Låsning av period expander in settings (inside iframe)"
+    selectors:
+      - ".form-expander-control:has-text('Låsning av period')"

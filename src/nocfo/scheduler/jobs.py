@@ -8,7 +8,7 @@ logger = structlog.get_logger()
 
 async def token_refresh_job() -> None:
     """Proactively refresh OAuth tokens."""
-    from nocfo.fortnox.auth import TokenManager
+    from nocfo.fortnox.api.auth import TokenManager
 
     logger.info("job_started", job="token_refresh")
     try:
@@ -33,9 +33,9 @@ async def daily_invoice_check_job() -> None:
     """Check for overdue customer invoices."""
     logger.info("job_started", job="daily_invoice_check")
     try:
-        from nocfo.fortnox.auth import TokenManager
-        from nocfo.fortnox.client import FortnoxClient
-        from nocfo.fortnox.invoices import InvoiceService
+        from nocfo.fortnox.api.auth import TokenManager
+        from nocfo.fortnox.api.client import FortnoxClient
+        from nocfo.fortnox.api.invoices import InvoiceService
 
         token_manager = TokenManager()
         await token_manager.initialize()
@@ -71,8 +71,8 @@ async def monthly_closing_check_job() -> None:
         from datetime import date, timedelta
 
         from nocfo.bookkeeping.closing import ClosingService
-        from nocfo.fortnox.auth import TokenManager
-        from nocfo.fortnox.client import FortnoxClient
+        from nocfo.fortnox.api.auth import TokenManager
+        from nocfo.fortnox.api.client import FortnoxClient
 
         # Previous month's last day
         today = date.today()

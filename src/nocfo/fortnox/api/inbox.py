@@ -5,7 +5,7 @@ from typing import Any
 
 import structlog
 
-from nocfo.fortnox.client import FortnoxClient
+from nocfo.fortnox.api.client import FortnoxClient
 
 logger = structlog.get_logger()
 

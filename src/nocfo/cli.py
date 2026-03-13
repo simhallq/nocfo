@@ -65,7 +65,7 @@ def auth() -> None:
 def setup() -> None:
     """Run interactive OAuth setup."""
     from nocfo.config import get_settings
-    from nocfo.fortnox.auth import TokenManager, exchange_code_for_token, start_authorization
+    from nocfo.fortnox.api.auth import TokenManager, exchange_code_for_token, start_authorization
 
     settings = get_settings()
     if not settings.validate_fortnox_credentials():
@@ -92,7 +92,7 @@ def setup() -> None:
 @click.option("--health", is_flag=True, help="Run full health check against Fortnox API")
 def status(health: bool) -> None:
     """Check authentication status."""
-    from nocfo.fortnox.auth import TokenManager
+    from nocfo.fortnox.api.auth import TokenManager
 
     async def _check():
         manager = TokenManager()
@@ -107,8 +107,8 @@ def status(health: bool) -> None:
         return
 
     if health:
-        from nocfo.fortnox.client import FortnoxClient
-        from nocfo.fortnox.health import HealthCheck
+        from nocfo.fortnox.api.client import FortnoxClient
+        from nocfo.fortnox.api.health import HealthCheck
 
         async def _health():
             async with FortnoxClient(token_manager=manager) as client:
@@ -137,9 +137,9 @@ def voucher() -> None:
 @click.option("--series", default="A", help="Voucher series")
 def voucher_list(series: str) -> None:
     """List vouchers."""
-    from nocfo.fortnox.auth import TokenManager
-    from nocfo.fortnox.client import FortnoxClient
-    from nocfo.fortnox.vouchers import VoucherService
+    from nocfo.fortnox.api.auth import TokenManager
+    from nocfo.fortnox.api.client import FortnoxClient
+    from nocfo.fortnox.api.vouchers import VoucherService
 
     async def _list():
         manager = TokenManager()
@@ -168,8 +168,8 @@ def voucher_create(template: str, amount: float, txn_date: str, description: str
     from decimal import Decimal
 
     from nocfo.bookkeeping.journal import JournalService
-    from nocfo.fortnox.auth import TokenManager
-    from nocfo.fortnox.client import FortnoxClient
+    from nocfo.fortnox.api.auth import TokenManager
+    from nocfo.fortnox.api.client import FortnoxClient
     from nocfo.storage.database import Database
     from nocfo.storage.idempotency import IdempotencyStore
 
@@ -267,8 +267,8 @@ def close() -> None:
 def close_check(month: str) -> None:
     """Check if a month can be closed (format: YYYY-MM)."""
     from nocfo.bookkeeping.closing import ClosingService
-    from nocfo.fortnox.auth import TokenManager
-    from nocfo.fortnox.client import FortnoxClient
+    from nocfo.fortnox.api.auth import TokenManager
+    from nocfo.fortnox.api.client import FortnoxClient
 
     period_end = parse_month(month)
 
@@ -451,7 +451,13 @@ def browser_start(headless: bool) -> None:
 
     # Start the API server (blocking)
     click.echo(f"Starting Browser API on port {port}...")
-    run_server(port=port, cdp_port=cdp_port, auth_token=settings.browser_api_token)
+    run_server(
+        port=port,
+        cdp_port=cdp_port,
+        auth_token=settings.browser_api_token,
+        funnel_base=settings.funnel_base,
+        sessions_dir=str(settings.sessions_dir),
+    )
 
 
 @browser.command("status")

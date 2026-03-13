@@ -6,10 +6,10 @@ from datetime import date
 
 import structlog
 
-from nocfo.fortnox.client import FortnoxClient
-from nocfo.fortnox.financial_years import FinancialYearService
-from nocfo.fortnox.invoices import InvoiceService
-from nocfo.fortnox.supplier_invoices import SupplierInvoiceService
+from nocfo.fortnox.api.client import FortnoxClient
+from nocfo.fortnox.api.financial_years import FinancialYearService
+from nocfo.fortnox.api.invoices import InvoiceService
+from nocfo.fortnox.api.supplier_invoices import SupplierInvoiceService
 
 logger = structlog.get_logger()
 

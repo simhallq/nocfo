@@ -7,9 +7,9 @@ import httpx
 import pytest
 import respx
 
-from nocfo.fortnox.client import FortnoxClient
-from nocfo.fortnox.models import Voucher, VoucherRow
-from nocfo.fortnox.vouchers import VoucherService
+from nocfo.fortnox.api.client import FortnoxClient
+from nocfo.fortnox.api.models import Voucher, VoucherRow
+from nocfo.fortnox.api.vouchers import VoucherService
 
 
 class TestVoucherService:

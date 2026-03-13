@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from nocfo.bookkeeping.journal import JournalService, VoucherValidationError
-from nocfo.fortnox.models import Account, FinancialYear, LockedPeriod, VoucherRow
+from nocfo.fortnox.api.models import Account, FinancialYear, LockedPeriod, VoucherRow
 
 
 @pytest.fixture

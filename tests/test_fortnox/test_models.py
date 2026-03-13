@@ -5,7 +5,7 @@ from decimal import Decimal
 
 import pytest
 
-from nocfo.fortnox.models import Account, Invoice, Voucher, VoucherRow
+from nocfo.fortnox.api.models import Account, Invoice, Voucher, VoucherRow
 
 
 class TestVoucherRow:

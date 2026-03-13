@@ -4,8 +4,8 @@ from typing import Any
 
 import structlog
 
-from nocfo.fortnox.client import FortnoxClient
-from nocfo.fortnox.models import InvoicePayment, SupplierInvoicePayment
+from nocfo.fortnox.api.client import FortnoxClient
+from nocfo.fortnox.api.models import InvoicePayment, SupplierInvoicePayment
 
 logger = structlog.get_logger()
 

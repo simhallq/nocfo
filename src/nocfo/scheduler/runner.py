@@ -71,9 +71,9 @@ class Scheduler:
 
     async def _run_health_check(self) -> None:
         """Run health checks before starting. Abort on critical failures."""
-        from nocfo.fortnox.auth import TokenManager
-        from nocfo.fortnox.client import FortnoxClient
-        from nocfo.fortnox.health import HealthCheck
+        from nocfo.fortnox.api.auth import TokenManager
+        from nocfo.fortnox.api.client import FortnoxClient
+        from nocfo.fortnox.api.health import HealthCheck
 
         manager = TokenManager()
         await manager.initialize()

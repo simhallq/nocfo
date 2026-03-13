@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BankID — Fortnox</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #f5f5f5;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    color: #333;
+  }
+  .container {
+    text-align: center;
+    padding: 2rem;
+    max-width: 400px;
+  }
+  h1 {
+    font-size: 1.4rem;
+    margin-bottom: 0.5rem;
+    color: #3B8C3E; /* Fortnox green */
+  }
+  .subtitle {
+    font-size: 0.9rem;
+    color: #666;
+    margin-bottom: 1.5rem;
+  }
+  #qr-img {
+    width: 280px;
+    height: 280px;
+    border: 2px solid #ddd;
+    border-radius: 12px;
+    background: #fff;
+    object-fit: contain;
+    display: none;
+  }
+  #status {
+    margin-top: 1rem;
+    font-size: 1rem;
+    padding: 0.5rem 1rem;
+    border-radius: 8px;
+  }
+  .status-waiting {
+    background: #fff3cd;
+    color: #856404;
+  }
+  .status-ok {
+    background: #d4edda;
+    color: #155724;
+  }
+  .status-error {
+    background: #f8d7da;
+    color: #721c24;
+  }
+  #bankid-btn {
+    display: none;
+    background: #3B8C3E;
+    color: #fff;
+    text-decoration: none;
+    font-size: 1.1rem;
+    font-weight: 600;
+    padding: 0.9rem 2rem;
+    border-radius: 10px;
+    margin: 1rem auto 0.5rem;
+    width: 100%;
+    max-width: 280px;
+    text-align: center;
+  }
+  #bankid-btn:active { background: #2d6b30; }
+  .spinner {
+    display: inline-block;
+    width: 40px;
+    height: 40px;
+    border: 4px solid #ddd;
+    border-top-color: #3B8C3E;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin: 2rem auto;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Fortnox BankID</h1>
+  <p class="subtitle">Tap the button below or scan the QR code from another device</p>
+  <div id="spinner" class="spinner"></div>
+  <a id="bankid-btn" href="#">Open BankID</a>
+  <img id="qr-img" alt="BankID QR Code">
+  <div id="status" class="status-waiting">Connecting...</div>
+</div>
+<script>
+(function() {
+  var params = new URLSearchParams(window.location.search);
+  var token = params.get('token');
+  if (!token) {
+    document.getElementById('status').textContent = 'Missing token';
+    document.getElementById('status').className = 'status-error';
+    return;
+  }
+
+  var img = document.getElementById('qr-img');
+  var status = document.getElementById('status');
+  var spinner = document.getElementById('spinner');
+  var bankidBtn = document.getElementById('bankid-btn');
+  var lastUri = '';
+
+  var evtSource = new EventSource('/auth/stream?token=' + encodeURIComponent(token));
+
+  evtSource.addEventListener('context', function(e) {
+    // Context is always "login" for Fortnox
+  });
+
+  evtSource.addEventListener('qr', function(e) {
+    img.src = 'data:image/png;base64,' + e.data;
+    img.style.display = 'block';
+    spinner.style.display = 'none';
+    status.textContent = 'Scan with BankID app';
+    status.className = 'status-waiting';
+  });
+
+  evtSource.addEventListener('bankid_uri', function(e) {
+    var uri = e.data;
+    if (uri && uri !== lastUri) {
+      bankidBtn.href = uri;
+      bankidBtn.style.display = 'block';
+      spinner.style.display = 'none';
+      lastUri = uri;
+    }
+  });
+
+  evtSource.addEventListener('waiting', function(e) {
+    status.textContent = 'Waiting for QR code...';
+    status.className = 'status-waiting';
+  });
+
+  evtSource.addEventListener('status', function(e) {
+    evtSource.close();
+    spinner.style.display = 'none';
+    bankidBtn.style.display = 'none';
+    if (e.data === 'authenticated' || e.data === 'complete') {
+      img.style.display = 'none';
+      status.textContent = 'Logged in! You can close this page.';
+      status.className = 'status-ok';
+    } else if (e.data === 'failed') {
+      status.textContent = 'Authentication failed. Please try again.';
+      status.className = 'status-error';
+    } else {
+      status.textContent = 'Session ended.';
+      status.className = 'status-error';
+    }
+  });
+
+  evtSource.addEventListener('error', function(e) {
+    status.textContent = 'Connection error — retrying...';
+    status.className = 'status-error';
+  });
+
+  evtSource.onerror = function() {
+    status.textContent = 'Connection lost — reconnecting...';
+    status.className = 'status-error';
+  };
+})();
+</script>
+</body>
+</html>

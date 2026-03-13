@@ -6,8 +6,8 @@ from typing import Any
 import httpx
 import structlog
 
-from nocfo.fortnox.client import FortnoxClient
-from nocfo.fortnox.models import FinancialYear, LockedPeriod
+from nocfo.fortnox.api.client import FortnoxClient
+from nocfo.fortnox.api.models import FinancialYear, LockedPeriod
 
 logger = structlog.get_logger()
 

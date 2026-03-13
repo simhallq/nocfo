@@ -5,8 +5,8 @@ from dataclasses import dataclass, field
 
 import structlog
 
-from nocfo.fortnox.client import FortnoxClient
-from nocfo.fortnox.financial_years import FinancialYearService
+from nocfo.fortnox.api.client import FortnoxClient
+from nocfo.fortnox.api.financial_years import FinancialYearService
 
 logger = structlog.get_logger()
 

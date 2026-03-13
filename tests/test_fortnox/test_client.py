@@ -4,7 +4,7 @@ import httpx
 import pytest
 import respx
 
-from nocfo.fortnox.client import FortnoxClient, RateLimiter
+from nocfo.fortnox.api.client import FortnoxClient, RateLimiter
 
 
 class TestRateLimiter:

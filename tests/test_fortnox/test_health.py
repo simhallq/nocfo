@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nocfo.fortnox.health import HealthCheck, HealthReport
+from nocfo.fortnox.api.health import HealthCheck, HealthReport
 
 
 @pytest.fixture
@@ -78,7 +78,7 @@ class TestHealthReport:
         assert report.healthy
 
     def test_summary_format(self):
-        from nocfo.fortnox.health import CheckResult
+        from nocfo.fortnox.api.health import CheckResult
 
         report = HealthReport(
             checks=[

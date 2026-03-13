@@ -2,7 +2,7 @@
 
 import pytest
 
-from nocfo.fortnox.auth import TokenManager
+from nocfo.fortnox.api.auth import TokenManager
 
 
 @pytest.fixture

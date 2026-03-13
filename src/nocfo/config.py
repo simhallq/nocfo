@@ -52,6 +52,12 @@ class Settings(BaseSettings):
         default=Path("data/learned_selectors.json"), description="Path to learned selectors store"
     )
 
+    # BankID auth settings
+    funnel_base: str = Field(default="", description="Tailscale Funnel base URL for BankID QR")
+    sessions_dir: Path = Field(
+        default=Path("data/sessions"), description="Per-customer session cookies"
+    )
+
     def validate_fortnox_credentials(self) -> bool:
         """Check that Fortnox credentials are configured."""
         return bool(self.fortnox_client_id and self.fortnox_client_secret)

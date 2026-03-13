@@ -7,11 +7,11 @@ from pathlib import Path
 
 import structlog
 
-from nocfo.fortnox.accounts import AccountService
-from nocfo.fortnox.client import FortnoxClient
-from nocfo.fortnox.financial_years import FinancialYearService
-from nocfo.fortnox.models import Voucher, VoucherRow
-from nocfo.fortnox.vouchers import VoucherService
+from nocfo.fortnox.api.accounts import AccountService
+from nocfo.fortnox.api.client import FortnoxClient
+from nocfo.fortnox.api.financial_years import FinancialYearService
+from nocfo.fortnox.api.models import Voucher, VoucherRow
+from nocfo.fortnox.api.vouchers import VoucherService
 from nocfo.storage.idempotency import IdempotencyStore, compute_idempotency_key
 
 logger = structlog.get_logger()
@@ -193,8 +193,8 @@ class JournalService:
         Logs a warning on failure but does not raise — the voucher is already posted.
         """
         try:
-            from nocfo.fortnox.file_connections import FileConnectionService
-            from nocfo.fortnox.inbox import InboxService
+            from nocfo.fortnox.api.file_connections import FileConnectionService
+            from nocfo.fortnox.api.inbox import InboxService
 
             if self._inbox_service is None:
                 self._inbox_service = InboxService(self._client)

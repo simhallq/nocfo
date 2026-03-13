@@ -9,7 +9,7 @@ import httpx
 import structlog
 
 from nocfo.config import get_settings
-from nocfo.fortnox.auth import TokenManager
+from nocfo.fortnox.api.auth import TokenManager
 
 logger = structlog.get_logger()
 
