@@ -3,8 +3,18 @@
 import base64
 import threading
 
+import structlog
+
 from nocfo.browser.handler import BrowserAPIHandler, register_route
-from nocfo.browser.operations_state import new_operation, update_operation
+from nocfo.browser.operations_state import (
+    add_qr_url,
+    mark_browser_work_started,
+    new_operation,
+    update_operation,
+)
+from nocfo.browser.tokens import generate_token
+
+logger = structlog.get_logger()
 
 
 # --- Auth routes ---
@@ -12,14 +22,48 @@ from nocfo.browser.operations_state import new_operation, update_operation
 
 @register_route("POST", "/auth/start")
 def handle_auth_start(handler: BrowserAPIHandler) -> None:
-    """POST /auth/start — Initiate BankID auth for a customer."""
+    """POST /auth/start — Create auth operation with long-lived token.
+
+    No browser work happens here. The BankID flow is triggered lazily
+    when the user opens the live_url and the SSE connection is established.
+    """
     body = handler._read_body()
     customer_id = body.get("customer_id")
     if not customer_id:
         handler._send_json({"error": "customer_id required"}, status=400)
         return
 
-    op_id = new_operation("auth", customer_id=customer_id)
+    op_id = new_operation("auth", customer_id=customer_id, initial_status="awaiting_user")
+
+    # Long-lived token (24h) — user can open link hours/days later
+    token = generate_token(op_id, context={"action": "login"}, ttl=86400)
+    live_url = f"{handler.funnel_base}/auth/live?token={token}"
+    add_qr_url(op_id, live_url)
+
+    logger.info("auth_operation_created", operation_id=op_id, live_url=live_url)
+
+    handler._send_json({
+        "operation_id": op_id,
+        "status": "awaiting_user",
+        "live_url": live_url,
+        "poll_url": f"/operation/{op_id}",
+        "message": "Send live_url to customer. BankID starts when they open it.",
+    }, status=202)
+
+
+def trigger_bankid_flow(op_id: str, pw_worker, sessions_dir: str) -> None:
+    """Start the BankID browser flow for an operation.
+
+    Uses mark_browser_work_started() for atomic dedup — safe to call
+    from concurrent SSE connections.
+    """
+    if not mark_browser_work_started(op_id):
+        return  # already started by another SSE connection
+
+    from nocfo.browser.operations_state import get_operation_internal
+
+    op = get_operation_internal(op_id)
+    customer_id = op.get("customer_id") if op else None
 
     def run_auth():
         def auth_work(browser):
@@ -29,24 +73,19 @@ def handle_auth_start(handler: BrowserAPIHandler) -> None:
             ctx = browser.contexts[0] if browser.contexts else browser.new_context()
             page = ctx.new_page()
             try:
-                if bankid_login_with_qr_capture(page, op_id, handler.funnel_base):
-                    save_session(page, customer_id, sessions_dir=handler.sessions_dir)
+                if bankid_login_with_qr_capture(page, op_id):
+                    if customer_id:
+                        save_session(page, customer_id, sessions_dir=sessions_dir)
                     update_operation(op_id, status="complete", result={"authenticated": True})
             except Exception as e:
                 update_operation(op_id, status="failed", error=str(e))
             finally:
                 page.close()
 
-        handler.pw_worker.submit(auth_work)
+        pw_worker.submit(auth_work)
 
     threading.Thread(target=run_auth, daemon=True).start()
-
-    handler._send_json({
-        "operation_id": op_id,
-        "status": "pending",
-        "poll_url": f"/operation/{op_id}",
-        "message": "Auth started. Poll operation for qr_url, then send to customer.",
-    }, status=202)
+    logger.info("bankid_flow_triggered", operation_id=op_id)
 
 
 @register_route("GET", "/auth/status")

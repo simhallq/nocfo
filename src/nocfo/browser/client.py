@@ -124,7 +124,11 @@ class BrowserApiClient:
         ).json()
 
     def start_auth(self, customer_id: str) -> dict[str, Any]:
-        """POST /auth/start — Initiate BankID auth for a customer."""
+        """POST /auth/start — Create BankID auth operation (lazy).
+
+        Returns operation_id, live_url (24h token), and status "awaiting_user".
+        No browser work starts until the user opens live_url.
+        """
         return self._request(
             "POST",
             "/auth/start",

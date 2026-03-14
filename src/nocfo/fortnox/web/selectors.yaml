@@ -25,6 +25,12 @@ login:
       - "img[alt*='QR']"
       - "canvas"
       - "[class*='qr']"
+  bankid_retry_button:
+    description: "the 'Försök igen' retry button when QR expires on id.fortnox.se"
+    selectors:
+      - "button:has-text('Försök igen')"
+      - "button:has-text('igen')"
+      - "a:has-text('Försök igen')"
   login_form:
     description: "the main login form on id.fortnox.se"
     selectors:

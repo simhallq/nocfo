@@ -23,7 +23,7 @@
   h1 {
     font-size: 1.4rem;
     margin-bottom: 0.5rem;
-    color: #3B8C3E; /* Fortnox green */
+    color: #3B8C3E;
   }
   .subtitle {
     font-size: 0.9rem;
@@ -45,19 +45,10 @@
     padding: 0.5rem 1rem;
     border-radius: 8px;
   }
-  .status-waiting {
-    background: #fff3cd;
-    color: #856404;
-  }
-  .status-ok {
-    background: #d4edda;
-    color: #155724;
-  }
-  .status-error {
-    background: #f8d7da;
-    color: #721c24;
-  }
-  #bankid-btn {
+  .status-waiting { background: #fff3cd; color: #856404; }
+  .status-ok { background: #d4edda; color: #155724; }
+  .status-error { background: #f8d7da; color: #721c24; }
+  .btn {
     display: none;
     background: #3B8C3E;
     color: #fff;
@@ -70,8 +61,10 @@
     width: 100%;
     max-width: 280px;
     text-align: center;
+    border: none;
+    cursor: pointer;
   }
-  #bankid-btn:active { background: #2d6b30; }
+  .btn:active { background: #2d6b30; }
   .spinner {
     display: inline-block;
     width: 40px;
@@ -88,83 +81,144 @@
 <body>
 <div class="container">
   <h1>Fortnox BankID</h1>
-  <p class="subtitle">Tap the button below or scan the QR code from another device</p>
+  <p class="subtitle" id="subtitle">Förbereder BankID-inloggning...</p>
   <div id="spinner" class="spinner"></div>
-  <a id="bankid-btn" href="#">Open BankID</a>
+  <a id="bankid-btn" class="btn" href="#">Öppna BankID</a>
   <img id="qr-img" alt="BankID QR Code">
-  <div id="status" class="status-waiting">Connecting...</div>
+  <button id="retry-btn" class="btn">Försök igen</button>
+  <div id="status" class="status-waiting">Ansluter...</div>
 </div>
 <script>
 (function() {
   var params = new URLSearchParams(window.location.search);
   var token = params.get('token');
   if (!token) {
-    document.getElementById('status').textContent = 'Missing token';
+    document.getElementById('status').textContent = 'Saknar token';
     document.getElementById('status').className = 'status-error';
+    document.getElementById('spinner').style.display = 'none';
+    document.getElementById('subtitle').textContent = '';
     return;
   }
 
   var img = document.getElementById('qr-img');
   var status = document.getElementById('status');
   var spinner = document.getElementById('spinner');
+  var subtitle = document.getElementById('subtitle');
   var bankidBtn = document.getElementById('bankid-btn');
+  var retryBtn = document.getElementById('retry-btn');
   var lastUri = '';
+  var evtSource = null;
+  var terminated = false;
 
-  var evtSource = new EventSource('/auth/stream?token=' + encodeURIComponent(token));
+  // Detect mobile (touch device with small screen)
+  var isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
-  evtSource.addEventListener('context', function(e) {
-    // Context is always "login" for Fortnox
-  });
+  function connectSSE() {
+    if (terminated) return;
 
-  evtSource.addEventListener('qr', function(e) {
-    img.src = 'data:image/png;base64,' + e.data;
-    img.style.display = 'block';
-    spinner.style.display = 'none';
-    status.textContent = 'Scan with BankID app';
-    status.className = 'status-waiting';
-  });
-
-  evtSource.addEventListener('bankid_uri', function(e) {
-    var uri = e.data;
-    if (uri && uri !== lastUri) {
-      bankidBtn.href = uri;
-      bankidBtn.style.display = 'block';
-      spinner.style.display = 'none';
-      lastUri = uri;
-    }
-  });
-
-  evtSource.addEventListener('waiting', function(e) {
-    status.textContent = 'Waiting for QR code...';
-    status.className = 'status-waiting';
-  });
-
-  evtSource.addEventListener('status', function(e) {
-    evtSource.close();
-    spinner.style.display = 'none';
+    // Reset UI
+    spinner.style.display = 'inline-block';
+    img.style.display = 'none';
     bankidBtn.style.display = 'none';
-    if (e.data === 'authenticated' || e.data === 'complete') {
-      img.style.display = 'none';
-      status.textContent = 'Logged in! You can close this page.';
-      status.className = 'status-ok';
-    } else if (e.data === 'failed') {
-      status.textContent = 'Authentication failed. Please try again.';
+    retryBtn.style.display = 'none';
+    subtitle.textContent = 'Startar BankID...';
+    status.textContent = 'Ansluter...';
+    status.className = 'status-waiting';
+    lastUri = '';
+
+    evtSource = new EventSource('/auth/stream?token=' + encodeURIComponent(token));
+
+    evtSource.addEventListener('context', function() {
+      subtitle.textContent = 'Startar BankID...';
+      status.textContent = 'Väntar på BankID...';
+      status.className = 'status-waiting';
+    });
+
+    evtSource.addEventListener('qr', function(e) {
+      spinner.style.display = 'none';
+      retryBtn.style.display = 'none';
+
+      if (isMobile) {
+        // On mobile: hide QR, show waiting message until bankid_uri arrives
+        if (!lastUri) {
+          subtitle.textContent = 'Förbereder BankID...';
+          status.textContent = 'Väntar på BankID-länk...';
+          status.className = 'status-waiting';
+        }
+        // Don't show QR on mobile — it can't be scanned from the same device
+      } else {
+        // On desktop: show QR for scanning from another device
+        img.src = 'data:image/png;base64,' + e.data;
+        img.style.display = 'block';
+        subtitle.textContent = 'Skanna QR-koden med BankID-appen';
+        status.textContent = 'Skanna QR-koden med BankID-appen';
+        status.className = 'status-waiting';
+      }
+    });
+
+    evtSource.addEventListener('bankid_uri', function(e) {
+      var uri = e.data;
+      if (uri && uri !== lastUri) {
+        bankidBtn.href = uri;
+        bankidBtn.style.display = 'block';
+        spinner.style.display = 'none';
+        lastUri = uri;
+
+        if (isMobile) {
+          subtitle.textContent = 'Tryck på knappen för att logga in';
+          status.textContent = 'Öppna BankID-appen';
+          status.className = 'status-waiting';
+        }
+      }
+    });
+
+    evtSource.addEventListener('waiting', function() {
+      status.textContent = 'Startar BankID...';
+      status.className = 'status-waiting';
+    });
+
+    evtSource.addEventListener('status', function(e) {
+      evtSource.close();
+      spinner.style.display = 'none';
+      bankidBtn.style.display = 'none';
+      if (e.data === 'authenticated' || e.data === 'complete') {
+        terminated = true;
+        img.style.display = 'none';
+        retryBtn.style.display = 'none';
+        subtitle.textContent = '';
+        status.textContent = 'Inloggad! Du kan stänga den här sidan.';
+        status.className = 'status-ok';
+      } else if (e.data === 'failed') {
+        img.style.display = 'none';
+        subtitle.textContent = 'Tidsgränsen nåddes';
+        status.textContent = 'Inloggningen misslyckades.';
+        status.className = 'status-error';
+        retryBtn.style.display = 'block';
+      } else {
+        subtitle.textContent = '';
+        status.textContent = 'Sessionen avslutades.';
+        status.className = 'status-error';
+        retryBtn.style.display = 'block';
+      }
+    });
+
+    evtSource.addEventListener('error', function() {
+      status.textContent = 'Anslutningsfel — försöker igen...';
       status.className = 'status-error';
-    } else {
-      status.textContent = 'Session ended.';
+    });
+
+    evtSource.onerror = function() {
+      status.textContent = 'Anslutningen bröts — ansluter igen...';
       status.className = 'status-error';
-    }
+    };
+  }
+
+  retryBtn.addEventListener('click', function() {
+    if (evtSource) evtSource.close();
+    connectSSE();
   });
 
-  evtSource.addEventListener('error', function(e) {
-    status.textContent = 'Connection error — retrying...';
-    status.className = 'status-error';
-  });
-
-  evtSource.onerror = function() {
-    status.textContent = 'Connection lost — reconnecting...';
-    status.className = 'status-error';
-  };
+  connectSSE();
 })();
 </script>
 </body>

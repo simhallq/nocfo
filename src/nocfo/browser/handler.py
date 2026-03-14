@@ -146,9 +146,9 @@ class BrowserAPIHandler(BaseHTTPRequestHandler):
 
         # Token-authenticated endpoints (no bearer auth)
         if path == "/auth/live" and method == "GET":
-            from nocfo.browser.tokens import validate_token
+            from nocfo.browser.tokens import validate_token_for_stream
             token = params.get("token", [""])[0]
-            op_id = validate_token(token)
+            op_id = validate_token_for_stream(token)
             if not op_id:
                 self._send_json({"error": "invalid or expired token"}, status=403)
                 return
@@ -235,8 +235,18 @@ class BrowserAPIHandler(BaseHTTPRequestHandler):
         })
 
     def _handle_sse_stream(self, op_id: str, token: str) -> None:
-        """SSE stream for QR code data and auth status."""
-        from nocfo.browser.operations_state import get_operation_internal
+        """SSE stream for QR code data and auth status.
+
+        Also serves as the trigger for lazy BankID flow:
+        - If status is "awaiting_user", starts the BankID browser work
+        - If status is "failed", resets for a new attempt on page refresh
+        """
+        from nocfo.browser.operations_state import (
+            get_operation_internal,
+            update_operation,
+            _operations,
+            _operations_lock,
+        )
         from nocfo.browser.tokens import get_token_context
 
         op = get_operation_internal(op_id)
@@ -245,6 +255,19 @@ class BrowserAPIHandler(BaseHTTPRequestHandler):
             self.wfile.write(b"event: error\ndata: operation_not_found\n\n")
             self.wfile.flush()
             return
+
+        # Auto-retry: if operation failed, reset for new attempt on page refresh
+        if op.get("status") == "failed":
+            update_operation(op_id, status="awaiting_user", error=None)
+            with _operations_lock:
+                if op_id in _operations:
+                    _operations[op_id]["_browser_work_started"] = False
+            op = get_operation_internal(op_id)
+
+        # Lazy start: trigger BankID flow when user opens the page
+        if op.get("status") == "awaiting_user":
+            from nocfo.fortnox.web.handlers import trigger_bankid_flow
+            trigger_bankid_flow(op_id, self.pw_worker, self.sessions_dir)
 
         self._send_sse_headers()
 
@@ -275,7 +298,7 @@ class BrowserAPIHandler(BaseHTTPRequestHandler):
                     self.wfile.write(b"event: status\ndata: failed\n\n")
                     self.wfile.flush()
                     break
-                elif status in ("waiting_for_qr", "pending"):
+                elif status in ("waiting_for_qr", "pending", "awaiting_user", "starting"):
                     if qr_data and qr_data != last_qr:
                         self.wfile.write(
                             f"event: qr\ndata: {qr_data}\n\n".encode()

@@ -11,12 +11,12 @@ _tokens_lock = threading.Lock()
 TOKEN_TTL = 300  # 5 minutes
 
 
-def generate_token(operation_id: str, context: dict | None = None) -> str:
+def generate_token(operation_id: str, context: dict | None = None, ttl: int = TOKEN_TTL) -> str:
     """Generate a one-time token linked to an operation."""
     token = secrets.token_urlsafe(32)
     with _tokens_lock:
         _tokens[token] = {
-            "expires": time.time() + TOKEN_TTL,
+            "expires": time.time() + ttl,
             "used": False,
             "operation_id": operation_id,
             "context": context or {},

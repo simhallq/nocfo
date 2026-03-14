@@ -18,7 +18,7 @@ logger = structlog.get_logger()
 FORTNOX_LOGIN_URL = "https://id.fortnox.se"
 TENANT_SELECT_URL = "https://apps.fortnox.se/login-fortnox-id/tenant-select"
 FORTNOX_APP_DOMAIN = "apps2.fortnox.se"
-LOGIN_TIMEOUT = 120  # seconds to wait for BankID scan
+LOGIN_TIMEOUT = 300  # seconds to wait for BankID scan (allows ~10 QR retry cycles)
 POLL_INTERVAL = 2  # seconds between auth status checks
 QR_POLL_INTERVAL = 0.8  # seconds between QR captures
 
@@ -89,14 +89,14 @@ def bankid_login(page: Page) -> dict:
         return {"status": "error", "message": str(e)}
 
 
-def bankid_login_with_qr_capture(page: Page, operation_id: str, funnel_base: str) -> bool:
+def bankid_login_with_qr_capture(page: Page, operation_id: str) -> bool:
     """BankID login flow with QR streaming for remote auth.
 
     Captures QR data and writes it to the operation dict for SSE streaming.
+    Token/URL generation is handled by the caller (handle_auth_start).
     Returns True if authenticated, False on timeout/failure.
     """
-    from nocfo.browser.operations_state import update_operation, add_qr_url
-    from nocfo.browser.tokens import generate_token
+    from nocfo.browser.operations_state import update_operation
 
     logger.info("bankid_login_qr_start", operation_id=operation_id)
     update_operation(operation_id, status="waiting_for_qr")
@@ -108,19 +108,35 @@ def bankid_login_with_qr_capture(page: Page, operation_id: str, funnel_base: str
         # Navigate to Fortnox login
         page.goto(FORTNOX_LOGIN_URL, wait_until="networkidle", timeout=20000)
 
-        # Click "BankID med QR-kod" to get QR mode (Fortnox defaults to same-device)
+        # Click BankID tab first — this shows "BankID på denna enhet" (same-device)
+        # which contains the bankid:// URI we need for mobile deep linking
+        try:
+            selectors.click(page, "login.bankid_tab", timeout=10000)
+            logger.info("bankid_tab_clicked")
+        except PlaywrightTimeout:
+            logger.warning("bankid_tab_not_found", msg="May already be on BankID page")
+
+        # Wait for same-device view to load and capture bankid:// URI
+        time.sleep(3)
+        uri = _extract_bankid_uri(page)
+        if uri:
+            from nocfo.browser.operations_state import _operations, _operations_lock
+            with _operations_lock:
+                if operation_id in _operations:
+                    _operations[operation_id]["_bankid_uri"] = uri
+            logger.info("bankid_uri_captured_before_qr", uri=uri[:50])
+
+        # Now switch to QR mode for desktop users (same auth order)
         _click_qr_mode(page)
 
         time.sleep(1)
 
-        # Generate one-time token and QR URL
-        token = generate_token(operation_id, context={"action": "login"})
-        qr_url = f"{funnel_base}/auth/live?token={token}"
-        add_qr_url(operation_id, qr_url)
-        logger.info("qr_url_generated", qr_url=qr_url)
-
-        # Poll loop: capture QR and check for login completion
+        # Poll loop: capture QR, detect stale QR, and check for login completion
         deadline = time.time() + LOGIN_TIMEOUT
+        last_qr = None
+        stale_since: float | None = None
+        QR_STALE_THRESHOLD = 15  # seconds before retrying
+
         while time.time() < deadline:
             # Capture QR data (fast JS eval)
             qr = capture_fortnox_qr(page)
@@ -129,6 +145,20 @@ def bankid_login_with_qr_capture(page: Page, operation_id: str, funnel_base: str
                 with _operations_lock:
                     if operation_id in _operations:
                         _operations[operation_id]["_qr_data"] = qr
+
+                # Track stale QR for retry logic
+                if qr != last_qr:
+                    last_qr = qr
+                    stale_since = None
+                elif stale_since is None:
+                    stale_since = time.time()
+                elif time.time() - stale_since > QR_STALE_THRESHOLD:
+                    logger.info("bankid_qr_stale", seconds=QR_STALE_THRESHOLD)
+                    if _click_retry_button(page):
+                        stale_since = None
+                        last_qr = None
+                        time.sleep(2)  # wait for new QR to appear
+                        continue
 
             # Check if login completed
             if _is_logged_in(page):
@@ -219,6 +249,7 @@ def _setup_bankid_intercept(page: Page, operation_id: str) -> None:
             if not isinstance(body, dict):
                 return
 
+            logger.debug("bankid_intercept_response", url=url, keys=list(body.keys())[:10])
             token = _find_autostart_token(body)
             if token:
                 uri = f"bankid:///?autostarttoken={token}&redirect=null"
@@ -265,6 +296,63 @@ def _click_qr_mode(page: Page) -> None:
     except PlaywrightTimeout:
         # May already be showing QR, or different page layout
         logger.warning("bankid_qr_button_not_found", msg="May already be in QR mode")
+
+
+def _extract_bankid_uri(page: Page) -> str | None:
+    """Try to extract bankid:// URI from the Fortnox login page via JS eval.
+
+    Checks DOM links, iframes, meta redirects, and the page's JS state.
+    Works best when called BEFORE switching to QR mode, while the
+    'BankID på denna enhet' view is still visible.
+    """
+    try:
+        return page.evaluate("""() => {
+            // 1. Direct bankid:// links in the DOM
+            for (const a of document.querySelectorAll('a[href]')) {
+                if (a.href && a.href.indexOf('bankid://') === 0) return a.href;
+            }
+
+            // 2. Buttons/links that trigger bankid:// via onclick or data attributes
+            const el = document.querySelector('[data-autostarttoken]');
+            if (el) return 'bankid:///?autostarttoken=' + el.dataset.autostarttoken + '&redirect=null';
+
+            // 3. Check for bankid:// in any iframe src or link
+            for (const iframe of document.querySelectorAll('iframe[src]')) {
+                if (iframe.src.indexOf('bankid://') === 0) return iframe.src;
+            }
+
+            // 4. Check window.location attempts (Fortnox may try to auto-redirect)
+            // Look in all script tags for autoStartToken patterns
+            const html = document.documentElement.innerHTML;
+            const m = html.match(/autostarttoken=([a-f0-9-]{20,})/i);
+            if (m) return 'bankid:///?autostarttoken=' + m[1] + '&redirect=null';
+
+            return null;
+        }""")
+    except Exception:
+        return None
+
+
+def _click_retry_button(page: Page) -> bool:
+    """Click Fortnox's 'Försök igen' button to restart QR flow.
+
+    Returns True if the button was found and clicked.
+    """
+    try:
+        selectors.click(page, "login.bankid_retry_button", timeout=3000)
+        logger.info("bankid_retry_button_clicked")
+        return True
+    except PlaywrightTimeout:
+        # Try text-based fallback selectors
+        for sel in ["button:has-text('igen')", "button:has-text('Försök')", "a:has-text('igen')"]:
+            try:
+                page.click(sel, timeout=2000)
+                logger.info("bankid_retry_fallback_clicked", selector=sel)
+                return True
+            except PlaywrightTimeout:
+                continue
+        logger.warning("bankid_retry_button_not_found")
+        return False
 
 
 def _is_logged_in(page: Page) -> bool:

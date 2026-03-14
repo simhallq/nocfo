@@ -10,22 +10,38 @@ _operations: dict[str, dict[str, Any]] = {}
 _operations_lock = threading.Lock()
 
 
-def new_operation(op_type: str, customer_id: str | None = None) -> str:
+def new_operation(op_type: str, customer_id: str | None = None, initial_status: str = "pending") -> str:
     """Create a new operation and return its ID."""
     op_id = secrets.token_urlsafe(16)
     with _operations_lock:
         _operations[op_id] = {
             "id": op_id,
             "type": op_type,
-            "status": "pending",
+            "status": initial_status,
             "customer_id": customer_id,
             "qr_urls": [],
             "result": None,
             "error": None,
             "stop_event": threading.Event(),
             "created": time.time(),
+            "_browser_work_started": False,
         }
     return op_id
+
+
+def mark_browser_work_started(op_id: str) -> bool:
+    """Atomic compare-and-swap: returns True only if this call flipped the flag.
+
+    Prevents duplicate browser submissions from concurrent SSE connections.
+    """
+    with _operations_lock:
+        op = _operations.get(op_id)
+        if not op:
+            return False
+        if op["_browser_work_started"]:
+            return False
+        op["_browser_work_started"] = True
+        return True
 
 
 def update_operation(op_id: str, **kwargs: Any) -> None:

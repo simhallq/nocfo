@@ -43,6 +43,19 @@ class TestTokenGeneration:
         ctx = get_token_context("nonexistent")
         assert ctx == {}
 
+    def test_generate_with_custom_ttl(self):
+        token = generate_token("op_1", ttl=86400)
+        with _tokens_lock:
+            info = _tokens[token]
+        # Token should expire ~24h from now, not the default 5min
+        assert info["expires"] > time.time() + 80000
+
+    def test_generate_with_short_ttl_expires_quickly(self):
+        token = generate_token("op_1", ttl=1)
+        assert validate_token_for_stream(token) == "op_1"
+        time.sleep(1.1)
+        assert validate_token_for_stream(token) is None
+
 
 class TestTokenValidation:
     def setup_method(self):
