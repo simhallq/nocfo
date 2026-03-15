@@ -40,6 +40,10 @@ CLI (click)
       └── Replay with vision fallback
 ```
 
+### Web agent
+
+The `web_agent/` module provides a Claude AI-powered browser automation agent. Given a Playwright page and a system prompt, the agent autonomously navigates Fortnox's web UI — clicking, typing, and reading page state — to complete tasks like period closing and report downloads. Pre-built task definitions live in `web_agent/tasks/`.
+
 ## Prerequisites
 
 - Python 3.11+
@@ -131,6 +135,12 @@ nocfo auth status --health
 | `SCREENSHOTS_DIR` | Directory for evidence screenshots | `data/screenshots` |
 | `LEARNED_SELECTORS_PATH` | Path to learned selectors store | `data/learned_selectors.json` |
 | `WORKFLOWS_DIR` | Workflow YAML output directory | `data/workflows` |
+| `FUNNEL_BASE` | Tailscale Funnel base URL for BankID QR | — |
+| `SESSIONS_DIR` | Per-customer session cookies directory | `data/sessions` |
+| `FORTNOX_BASE_URL` | Fortnox API base URL | `https://api.fortnox.se/3` |
+| `FORTNOX_AUTH_URL` | Fortnox OAuth URL | `https://apps.fortnox.se/oauth-v1` |
+| `OAUTH_REDIRECT_URI` | OAuth redirect URI | `http://localhost:8888/callback` |
+| `OAUTH_REDIRECT_PORT` | OAuth redirect server port | `8888` |
 
 ## Usage
 
@@ -217,6 +227,20 @@ nocfo schedule start
 
 # List scheduled jobs
 nocfo schedule status
+```
+
+### Approve
+
+```bash
+# Approve a pending destructive operation
+nocfo approve <job-id>
+```
+
+### SvD invoice download
+
+```bash
+# Download the latest SvD invoice (replays a recorded workflow)
+nocfo svd-invoice
 ```
 
 ### Workflow recorder
@@ -307,47 +331,70 @@ Unmatched transactions are flagged for manual review.
 
 ```
 src/nocfo/
-├── cli.py                 # Click CLI entry point
-├── config.py              # Settings (pydantic-settings)
+├── cli.py                    # Click CLI entry point
+├── config.py                 # Settings (pydantic-settings)
 ├── bookkeeping/
-│   ├── closing.py         # Period closing logic
-│   ├── journal.py         # Voucher/journal creation
-│   ├── reconciliation.py  # Reconciliation logic
-│   └── rules.py           # Rule engine for categorization
+│   ├── closing.py            # Period closing logic
+│   ├── journal.py            # Voucher/journal creation
+│   ├── reconciliation.py     # Reconciliation logic
+│   └── rules.py              # Rule engine for categorization
 ├── browser/
-│   ├── server.py          # HTTP API server (Playwright)
-│   ├── handler.py         # Request handler / page operations
-│   ├── client.py          # Python client for the browser API
-│   ├── chrome.py          # Chrome launch & CDP management
-│   ├── navigate.py        # Fortnox SPA navigation
-│   ├── session.py         # Login / session management
-│   ├── evidence.py        # Screenshot evidence capture
-│   ├── vision.py          # Claude vision fallback
-│   ├── learned.py         # Learned selector persistence
-│   └── operations/        # Per-task browser operations
+│   ├── server.py             # HTTP API server (Playwright)
+│   ├── handler.py            # Request handler / page operations
+│   ├── client.py             # Python client for the browser API
+│   ├── chrome.py             # Chrome launch & CDP management
+│   ├── operations_state.py   # Browser operation state tracking
+│   └── tokens.py             # Browser-level token management
 ├── fortnox/
-│   ├── client.py          # REST API client (httpx)
-│   ├── auth.py            # OAuth2 token management
-│   ├── vouchers.py        # Voucher API
-│   ├── accounts.py        # Chart of accounts
-│   ├── invoices.py        # Invoice API
-│   ├── health.py          # API health checks
-│   └── ...                # payments, suppliers, etc.
+│   ├── api/
+│   │   ├── client.py         # REST API client (httpx)
+│   │   ├── auth.py           # OAuth2 token management
+│   │   ├── models.py         # Pydantic models for API entities
+│   │   ├── vouchers.py       # Voucher API
+│   │   ├── accounts.py       # Chart of accounts
+│   │   ├── invoices.py       # Invoice API
+│   │   ├── supplier_invoices.py # Supplier invoice API
+│   │   ├── file_connections.py  # File attachment API
+│   │   ├── financial_years.py   # Financial year API
+│   │   ├── inbox.py          # File inbox API
+│   │   └── health.py         # API health checks
+│   └── web/
+│       ├── auth.py           # BankID / web login
+│       ├── handlers.py       # Web UI request handlers
+│       ├── navigate.py       # Fortnox SPA navigation
+│       ├── session.py        # Web session management
+│       ├── selectors.py      # CSS/XPath selectors for Fortnox UI
+│       ├── evidence.py       # Screenshot evidence capture
+│       ├── vision.py         # Claude vision fallback
+│       ├── learned.py        # Learned selector persistence
+│       └── operations/       # Per-task browser operations
+│           ├── reconciliation.py
+│           ├── period_closing.py
+│           ├── reports.py
+│           └── rules.py
+├── web_agent/
+│   ├── agent.py              # Claude AI-powered browser agent
+│   ├── actions.py            # Agent action definitions
+│   ├── browser.py            # Agent browser interface
+│   ├── prompts.py            # System prompts for agent tasks
+│   └── tasks/                # Pre-built agent tasks
+│       ├── period_closing.py
+│       └── reports.py
 ├── recorder/
-│   ├── models.py          # Workflow/step Pydantic models
-│   ├── recorder.py        # Browser event capture
-│   ├── injector.py        # Injected JS for interaction capture
-│   ├── replay.py          # ReplayEngine with selector fallback
-│   ├── enhancer.py        # Claude vision enhancement
-│   └── vision_fallback.py # Vision-based coordinate fallback
+│   ├── models.py             # Workflow/step Pydantic models
+│   ├── recorder.py           # Browser event capture
+│   ├── injector.py           # Injected JS for interaction capture
+│   ├── replay.py             # ReplayEngine with selector fallback
+│   ├── enhancer.py           # Claude vision enhancement
+│   └── vision_fallback.py    # Vision-based coordinate fallback
 ├── scheduler/
-│   ├── runner.py          # APScheduler-based runner
-│   └── jobs.py            # Job definitions
+│   ├── runner.py             # APScheduler-based runner
+│   └── jobs.py               # Job definitions
 └── storage/
-    ├── database.py        # SQLite via aiosqlite
-    ├── idempotency.py     # Duplicate voucher prevention
-    └── tokens.py          # OAuth token storage
+    ├── database.py           # SQLite via aiosqlite
+    ├── idempotency.py        # Duplicate voucher prevention
+    └── tokens.py             # OAuth token storage
 
-rules.yaml                 # Transaction categorization rules
-tests/                     # 106 tests (pytest + pytest-asyncio)
+rules.yaml                    # Transaction categorization rules
+tests/                        # ~220 tests (pytest + pytest-asyncio)
 ```
