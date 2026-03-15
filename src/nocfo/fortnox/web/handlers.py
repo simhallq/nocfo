@@ -26,12 +26,28 @@ def handle_auth_start(handler: BrowserAPIHandler) -> None:
 
     No browser work happens here. The BankID flow is triggered lazily
     when the user opens the live_url and the SSE connection is established.
+
+    If a valid session already exists for the customer, returns
+    "already_authenticated" unless force=true is passed.
     """
     body = handler._read_body()
     customer_id = body.get("customer_id")
     if not customer_id:
         handler._send_json({"error": "customer_id required"}, status=400)
         return
+
+    # Short-circuit if session is already valid (skip BankID)
+    force = body.get("force", False)
+    if not force:
+        from nocfo.fortnox.web.session import has_valid_session
+        if has_valid_session(customer_id, sessions_dir=handler.sessions_dir):
+            logger.info("auth_session_valid", customer_id=customer_id)
+            handler._send_json({
+                "status": "already_authenticated",
+                "customer_id": customer_id,
+                "message": "Valid session exists. Use force=true to re-authenticate.",
+            })
+            return
 
     op_id = new_operation("auth", customer_id=customer_id, initial_status="awaiting_user")
 
@@ -70,8 +86,11 @@ def trigger_bankid_flow(op_id: str, pw_worker, sessions_dir: str) -> None:
             from nocfo.fortnox.web.auth import bankid_login_with_qr_capture
             from nocfo.fortnox.web.session import save_session
 
-            ctx = browser.contexts[0] if browser.contexts else browser.new_context()
+            # Always use a fresh context for auth — prevents old session
+            # cookies from causing Fortnox to auto-login without BankID
+            ctx = browser.new_context()
             page = ctx.new_page()
+
             try:
                 if bankid_login_with_qr_capture(page, op_id):
                     if customer_id:
@@ -82,7 +101,11 @@ def trigger_bankid_flow(op_id: str, pw_worker, sessions_dir: str) -> None:
             finally:
                 page.close()
 
-        pw_worker.submit(auth_work)
+        try:
+            pw_worker.submit(auth_work)
+        except Exception as e:
+            logger.error("bankid_flow_error", operation_id=op_id, error=str(e))
+            update_operation(op_id, status="failed", error=str(e))
 
     threading.Thread(target=run_auth, daemon=True).start()
     logger.info("bankid_flow_triggered", operation_id=op_id)

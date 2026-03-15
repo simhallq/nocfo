@@ -139,6 +139,14 @@ def bankid_login_with_qr_capture(page: Page, operation_id: str) -> bool:
         # Wait for BankID page to load after clicking tab
         time.sleep(2)
 
+        # Extract bankid:// URI by clicking "BankID on this device" button.
+        # This triggers a redirect to bankid:///?autostarttoken=... which we
+        # intercept before it navigates away.
+        bankid_uri = _click_same_device_and_capture_uri(page)
+        if bankid_uri:
+            update_operation(operation_id, _bankid_uri=bankid_uri)
+            logger.info("bankid_uri_captured", uri=bankid_uri[:60])
+
         # Check if QR is already visible (new Fortnox flow goes directly to QR)
         qr_already_visible = capture_fortnox_qr(page) is not None
         logger.info("bankid_post_tab_state", url=page.url[:80], qr_visible=qr_already_visible)
@@ -159,6 +167,10 @@ def bankid_login_with_qr_capture(page: Page, operation_id: str) -> bool:
             if uri:
                 update_operation(operation_id, _bankid_uri=uri)
                 logger.info("bankid_uri_captured", uri=uri[:50])
+
+        # Note: Fortnox does not expose autoStartToken, so bankid:// deep link
+        # for same-device mobile auth is not possible. QR scanning from another
+        # device is the only supported flow.
 
         # Poll loop: capture QR, detect stale QR, and check for login completion
         deadline = time.time() + LOGIN_TIMEOUT
@@ -288,20 +300,36 @@ def _setup_bankid_intercept(page: Page, operation_id: str) -> None:
             if "id.fortnox.se" not in url:
                 return
             ct = response.headers.get("content-type", "")
-            if "json" not in ct and "javascript" not in ct:
-                return
-            try:
-                body = response.json()
-            except Exception:
-                return
+
+            # Try to parse any response that might contain JSON
+            body = None
+            if "json" in ct or "javascript" in ct or "text" in ct:
+                try:
+                    body = response.json()
+                except Exception:
+                    return
+
             if not isinstance(body, dict):
+                if isinstance(body, list):
+                    for item in body:
+                        if isinstance(item, dict):
+                            token = _find_autostart_token(item)
+                            if token:
+                                uri = f"bankid:///?autostarttoken={token}&redirect=null"
+                                logger.info("bankid_autostart_captured", url=url[:80])
+                                from nocfo.browser.operations_state import update_operation
+                                update_operation(operation_id, _bankid_uri=uri)
+                                return
                 return
 
-            logger.debug("bankid_intercept_response", url=url, keys=list(body.keys())[:10])
+            logger.debug("bankid_intercept_response", url=url[:80], keys=list(body.keys())[:10])
+            # Note: Fortnox's bankid-v2/authenticate returns collectToken (JWT)
+            # and qrCode (base64 PNG), but NOT autoStartToken. The bankid://
+            # deep link cannot be constructed from these responses.
             token = _find_autostart_token(body)
             if token:
                 uri = f"bankid:///?autostarttoken={token}&redirect=null"
-                logger.info("bankid_autostart_captured", url=url)
+                logger.info("bankid_autostart_captured", url=url[:80])
                 from nocfo.browser.operations_state import update_operation
                 update_operation(operation_id, _bankid_uri=uri)
         except Exception:
@@ -377,6 +405,100 @@ def _extract_bankid_uri(page: Page) -> str | None:
         }""")
     except Exception:
         return None
+
+
+def _click_same_device_and_capture_uri(page: Page) -> str | None:
+    """Click 'BankID on this device' button and capture the bankid:// redirect.
+
+    Fortnox shows this button alongside the QR code. Clicking it triggers a
+    redirect to bankid:///?autostarttoken=... which we intercept.
+    """
+    try:
+        # Inject interceptor for bankid:// navigation
+        page.evaluate("""() => {
+            window.__CAPTURED_BANKID_URI__ = '';
+            // Intercept location changes
+            const origAssign = window.location.assign.bind(window.location);
+            const origReplace = window.location.replace.bind(window.location);
+            window.location.assign = function(url) {
+                if (url && String(url).indexOf('bankid://') === 0) {
+                    window.__CAPTURED_BANKID_URI__ = String(url);
+                    return;
+                }
+                return origAssign(url);
+            };
+            window.location.replace = function(url) {
+                if (url && String(url).indexOf('bankid://') === 0) {
+                    window.__CAPTURED_BANKID_URI__ = String(url);
+                    return;
+                }
+                return origReplace(url);
+            };
+            // Intercept window.open
+            const origOpen = window.open;
+            window.open = function(url) {
+                if (url && String(url).indexOf('bankid://') === 0) {
+                    window.__CAPTURED_BANKID_URI__ = String(url);
+                    return null;
+                }
+                return origOpen.apply(this, arguments);
+            };
+        }""")
+
+        # Click "BankID on this device" / "BankID på denna enhet"
+        btn_selectors = [
+            "button:has-text('BankID on this device')",
+            "button:has-text('BankID på denna enhet')",
+            "button:has-text('denna enhet')",
+            "button:has-text('this device')",
+        ]
+        clicked = False
+        for sel in btn_selectors:
+            try:
+                page.click(sel, timeout=2000)
+                logger.info("bankid_same_device_clicked", selector=sel)
+                clicked = True
+                break
+            except PlaywrightTimeout:
+                continue
+
+        if not clicked:
+            logger.debug("bankid_same_device_button_not_found")
+            return None
+
+        # Wait for redirect/navigation attempt
+        time.sleep(2)
+
+        # Check if interceptor caught the URI
+        uri = page.evaluate("() => window.__CAPTURED_BANKID_URI__ || null")
+        if uri and uri.startswith("bankid://"):
+            logger.info("bankid_uri_intercepted", uri=uri[:60])
+            return uri
+
+        # Also check if page URL changed to bankid://
+        url = page.url
+        if url.startswith("bankid://"):
+            return url
+
+        # Check page for any bankid:// links that appeared
+        uri = page.evaluate("""() => {
+            for (const a of document.querySelectorAll('a[href^="bankid://"]')) {
+                return a.href;
+            }
+            // Check if there's a meta refresh or JS redirect pending
+            const html = document.documentElement.innerHTML;
+            const m = html.match(/bankid:\\/\\/\\/\\?autostarttoken=([a-f0-9-]+)/i);
+            if (m) return 'bankid:///?autostarttoken=' + m[1] + '&redirect=null';
+            return null;
+        }""")
+        if uri:
+            return uri
+
+        logger.info("bankid_same_device_no_uri_captured")
+    except Exception as e:
+        logger.warning("bankid_same_device_error", error=str(e))
+
+    return None
 
 
 def _restart_bankid_flow(page: Page) -> bool:

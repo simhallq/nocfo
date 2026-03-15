@@ -29,6 +29,13 @@ login:
       - "img[alt*='QR']"
       - "canvas"
       - "[class*='qr']"
+  bankid_same_device_button:
+    description: "the 'BankID on this device' button on the QR page (sv/en)"
+    selectors:
+      - "button:has-text('BankID on this device')"
+      - "button:has-text('BankID på denna enhet')"
+      - "button:has-text('denna enhet')"
+      - "button:has-text('this device')"
   bankid_retry_button:
     description: "the retry button when QR expires on id.fortnox.se (sv/en)"
     selectors:

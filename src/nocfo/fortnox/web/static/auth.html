@@ -138,17 +138,19 @@
       spinner.style.display = 'none';
       retryBtn.style.display = 'none';
 
-      if (isMobile) {
-        // On mobile: hide QR, show waiting message until bankid_uri arrives
-        if (!lastUri) {
-          subtitle.textContent = 'Förbereder BankID...';
-          status.textContent = 'Väntar på BankID-länk...';
-          status.className = 'status-waiting';
-        }
-        // Don't show QR on mobile — it can't be scanned from the same device
-      } else {
+      if (isMobile && !lastUri) {
+        // On mobile: show QR with instruction to use a computer instead.
+        // Fortnox doesn't expose autoStartToken, so bankid:// deep link
+        // is not possible. QR must be scanned from another device.
+        var d = e.data;
+        try { var t = atob(d.substring(0, 20)); } catch(x) { var t = ''; }
+        img.src = (t.indexOf('<svg') >= 0 ? 'data:image/svg+xml;base64,' : 'data:image/png;base64,') + d;
+        img.style.display = 'block';
+        subtitle.textContent = 'Öppna denna länk på en dator';
+        status.textContent = 'Skanna QR-koden med BankID-appen på din mobil';
+        status.className = 'status-waiting';
+      } else if (!isMobile) {
         // On desktop: show QR for scanning from another device
-        // Detect SVG vs PNG based on decoded content
         var d = e.data;
         try { var t = atob(d.substring(0, 20)); } catch(x) { var t = ''; }
         img.src = (t.indexOf('<svg') >= 0 ? 'data:image/svg+xml;base64,' : 'data:image/png;base64,') + d;
