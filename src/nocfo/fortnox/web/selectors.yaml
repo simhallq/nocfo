@@ -20,7 +20,9 @@ login:
     selectors:
       - "button:has-text('BankID med QR-kod')"
       - "button:has-text('QR-kod')"
+      - "button:has-text('QR code')"
       - "a:has-text('QR-kod')"
+      - "a:has-text('QR code')"
   qr_image:
     description: "the BankID QR code image or canvas"
     selectors:
@@ -28,11 +30,14 @@ login:
       - "canvas"
       - "[class*='qr']"
   bankid_retry_button:
-    description: "the 'Försök igen' retry button when QR expires on id.fortnox.se"
+    description: "the retry button when QR expires on id.fortnox.se (sv/en)"
     selectors:
       - "button:has-text('Försök igen')"
+      - "button:has-text('Try again')"
       - "button:has-text('igen')"
+      - "button:has-text('again')"
       - "a:has-text('Försök igen')"
+      - "a:has-text('Try again')"
       - "button:has-text('Försök')"
   login_form:
     description: "the main login form on id.fortnox.se"

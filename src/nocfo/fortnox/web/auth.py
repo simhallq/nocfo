@@ -166,11 +166,21 @@ def bankid_login_with_qr_capture(page: Page, operation_id: str) -> bool:
         stale_since: float | None = None
         QR_STALE_THRESHOLD = 15  # seconds before retrying
 
+        qr_lost_since: float | None = None
+        QR_LOST_THRESHOLD = 5  # seconds without QR before attempting restart
+
         while time.time() < deadline and not (stop_event and stop_event.is_set()):
+            # Check if login completed (before QR capture for fast detection)
+            if _is_logged_in(page):
+                logger.info("bankid_login_qr_success", url=page.url)
+                update_operation(operation_id, status="authenticated")
+                return True
+
             # Capture QR data (fast JS eval)
             qr = capture_fortnox_qr(page)
             if qr:
                 update_operation(operation_id, _qr_data=qr)
+                qr_lost_since = None
 
                 # Track stale QR for retry logic
                 if qr != last_qr:
@@ -183,14 +193,20 @@ def bankid_login_with_qr_capture(page: Page, operation_id: str) -> bool:
                     if _click_retry_button(page):
                         stale_since = None
                         last_qr = None
-                        time.sleep(2)  # wait for new QR to appear
+                        time.sleep(2)
                         continue
-
-            # Check if login completed
-            if _is_logged_in(page):
-                logger.info("bankid_login_qr_success", url=page.url)
-                update_operation(operation_id, status="authenticated")
-                return True
+            elif last_qr is not None:
+                # QR was visible but disappeared — BankID session likely expired
+                if qr_lost_since is None:
+                    qr_lost_since = time.time()
+                elif time.time() - qr_lost_since > QR_LOST_THRESHOLD:
+                    logger.info("bankid_qr_lost", msg="QR disappeared, restarting flow")
+                    if _restart_bankid_flow(page):
+                        stale_since = None
+                        last_qr = None
+                        qr_lost_since = None
+                        time.sleep(2)
+                        continue
 
             time.sleep(QR_POLL_INTERVAL)
 
@@ -363,6 +379,32 @@ def _extract_bankid_uri(page: Page) -> str | None:
         return None
 
 
+def _restart_bankid_flow(page: Page) -> bool:
+    """Restart BankID flow after session expiry.
+
+    Fortnox shows an error page with options to restart via QR or same-device.
+    Tries retry button first, then QR mode button, then re-clicks BankID tab.
+    """
+    if _click_retry_button(page):
+        return True
+    # Fortnox may show "BankID with QR code" link instead of retry button
+    try:
+        selectors.click(page, "login.bankid_qr_button", timeout=3000)
+        logger.info("bankid_qr_restart_clicked")
+        return True
+    except PlaywrightTimeout:
+        pass
+    # Last resort: click BankID tab again
+    try:
+        selectors.click(page, "login.bankid_tab", timeout=3000)
+        logger.info("bankid_tab_restart_clicked")
+        return True
+    except PlaywrightTimeout:
+        pass
+    logger.warning("bankid_restart_failed")
+    return False
+
+
 def _click_retry_button(page: Page) -> bool:
     """Click Fortnox's 'Försök igen' button to restart QR flow.
 
@@ -380,25 +422,31 @@ def _click_retry_button(page: Page) -> bool:
 def _is_logged_in(page: Page) -> bool:
     """Check if the page indicates successful login.
 
-    Detects: tenant-select page, or the apps2 app itself.
+    Detects: tenant-select, apps2, account page, or completion redirect.
     """
     url = page.url
 
     # Landed on tenant select or the app
     if "tenant-select" in url:
+        logger.info("login_detected", trigger="tenant-select", url=url[:80])
         return True
     if FORTNOX_APP_DOMAIN in url:
+        logger.info("login_detected", trigger="app-domain", url=url[:80])
         return True
 
-    # Check for session cookies
-    try:
-        cookies = page.context.cookies()
-        cookie_names = {c["name"] for c in cookies}
-        if any("fortnox" in n.lower() for n in cookie_names):
-            # Has Fortnox cookies and not on login page
-            if "id.fortnox.se" not in url or "/account" in url:
-                return True
-    except Exception:
-        pass
+    # Redirected to account page after BankID auth
+    if "id.fortnox.se" in url and "/account" in url:
+        logger.info("login_detected", trigger="account-page", url=url[:80])
+        return True
+
+    # BankID completion redirect
+    if "/complete" in url or "/callback" in url:
+        logger.info("login_detected", trigger="completion-url", url=url[:80])
+        return True
+
+    # No longer on login page (redirected away from BankID flow)
+    if "id.fortnox.se" in url and "/fortnoxid-ui-login" not in url:
+        logger.info("login_detected", trigger="left-login-page", url=url[:80])
+        return True
 
     return False
