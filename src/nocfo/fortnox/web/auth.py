@@ -31,6 +31,21 @@ _FORTNOX_QR_SELECTORS = [
 ]
 _cached_qr_selector = None
 
+# JS snippet that extracts QR data from any element type (img, canvas, or SVG)
+_QR_EXTRACT_JS = """(sel) => {
+    const el = document.querySelector(sel);
+    if (!el || el.offsetWidth < 50) return null;
+    const tag = el.tagName.toUpperCase();
+    if (tag === 'CANVAS') return el.toDataURL('image/png');
+    if (tag === 'IMG') return el.src || null;
+    if (tag === 'svg' || tag === 'SVG') {
+        const serializer = new XMLSerializer();
+        const svgStr = serializer.serializeToString(el);
+        return 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgStr)));
+    }
+    return null;
+}"""
+
 
 def bankid_login(page: Page) -> dict:
     """Execute BankID login flow in a visible Chrome window.
@@ -121,21 +136,29 @@ def bankid_login_with_qr_capture(page: Page, operation_id: str) -> bool:
         except PlaywrightTimeout:
             logger.warning("bankid_tab_not_found", msg="May already be on BankID page")
 
-        # Wait for same-device view to load and capture bankid:// URI
-        uri = None
-        for _ in range(6):
-            time.sleep(0.5)
+        # Wait for BankID page to load after clicking tab
+        time.sleep(2)
+
+        # Check if QR is already visible (new Fortnox flow goes directly to QR)
+        qr_already_visible = capture_fortnox_qr(page) is not None
+        logger.info("bankid_post_tab_state", url=page.url[:80], qr_visible=qr_already_visible)
+
+        if not qr_already_visible:
+            # Try to capture bankid:// URI from same-device view
             uri = _extract_bankid_uri(page)
             if uri:
-                break
-        if uri:
-            update_operation(operation_id, _bankid_uri=uri)
-            logger.info("bankid_uri_captured_before_qr", uri=uri[:50])
+                update_operation(operation_id, _bankid_uri=uri)
+                logger.info("bankid_uri_captured_before_qr", uri=uri[:50])
 
-        # Now switch to QR mode for desktop users (same auth order)
-        _click_qr_mode(page)
-
-        time.sleep(1)
+            # Switch to QR mode (old Fortnox flow had a separate step)
+            _click_qr_mode(page)
+            time.sleep(1)
+        else:
+            # QR already showing — also try to capture bankid:// URI
+            uri = _extract_bankid_uri(page)
+            if uri:
+                update_operation(operation_id, _bankid_uri=uri)
+                logger.info("bankid_uri_captured", uri=uri[:50])
 
         # Poll loop: capture QR, detect stale QR, and check for login completion
         deadline = time.time() + LOGIN_TIMEOUT
@@ -184,6 +207,7 @@ def bankid_login_with_qr_capture(page: Page, operation_id: str) -> bool:
 def capture_fortnox_qr(page: Page) -> str | None:
     """Extract QR base64 from id.fortnox.se. Fast JS eval path.
 
+    Supports img, canvas, and SVG QR codes.
     Returns base64 string (without data URI prefix) or None.
     """
     global _cached_qr_selector
@@ -191,41 +215,46 @@ def capture_fortnox_qr(page: Page) -> str | None:
     # Fast path: use cached selector
     if _cached_qr_selector:
         try:
-            src = page.evaluate(
-                "(sel) => { const el = document.querySelector(sel); "
-                "return el && el.offsetWidth > 0 ? "
-                "(el.tagName === 'CANVAS' ? el.toDataURL('image/png') : el.src) : null; }",
-                _cached_qr_selector,
-            )
+            src = page.evaluate(_QR_EXTRACT_JS, _cached_qr_selector)
             if src:
                 return _extract_base64(src)
         except Exception:
             _cached_qr_selector = None
 
-    # Discovery path: find working selector
+    # Discovery path: try known selectors
     for sel in _FORTNOX_QR_SELECTORS:
         try:
-            src = page.evaluate(
-                "(sel) => { const el = document.querySelector(sel); "
-                "return el && el.offsetWidth > 0 ? "
-                "(el.tagName === 'CANVAS' ? el.toDataURL('image/png') : el.src) : null; }",
-                sel,
-            )
+            src = page.evaluate(_QR_EXTRACT_JS, sel)
             if src:
                 _cached_qr_selector = sel
                 return _extract_base64(src)
         except Exception:
             continue
 
+    # SVG discovery: find large SVG with many rects (QR pattern)
+    try:
+        result = page.evaluate("""() => {
+            for (const svg of document.querySelectorAll('svg')) {
+                const r = svg.getBoundingClientRect();
+                if (r.width > 100 && r.height > 100 && svg.querySelectorAll('rect,path').length > 20) {
+                    const svgStr = new XMLSerializer().serializeToString(svg);
+                    return 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgStr)));
+                }
+            }
+            return null;
+        }""")
+        if result:
+            return _extract_base64(result)
+    except Exception:
+        pass
+
     return None
 
 
 def _extract_base64(src: str) -> str | None:
-    """Extract base64 data from a data URI."""
+    """Extract base64 data from a data URI (PNG, SVG, or other image formats)."""
     if not src:
         return None
-    if src.startswith("data:image/png;base64,"):
-        return src[len("data:image/png;base64,"):]
     if src.startswith("data:image"):
         try:
             return src[src.index(",") + 1:]
@@ -287,16 +316,16 @@ def _find_autostart_token(obj, depth: int = 0) -> str | None:
 def _click_qr_mode(page: Page) -> None:
     """Click 'BankID med QR-kod' button to switch from same-device to QR mode.
 
-    Fortnox defaults to 'BankID på denna enhet' which tries to open BankID
-    on the same machine. For remote auth we need QR mode.
+    Fortnox may show QR directly after clicking BankID (no separate step),
+    so this uses a short timeout to fail fast when not needed.
     """
     try:
-        selectors.click(page, "login.bankid_qr_button", timeout=5000)
+        selectors.click(page, "login.bankid_qr_button", timeout=2000)
         logger.info("bankid_qr_mode_clicked")
-        page.wait_for_timeout(2000)
+        page.wait_for_timeout(1000)
     except PlaywrightTimeout:
-        # May already be showing QR, or different page layout
-        logger.warning("bankid_qr_button_not_found", msg="May already be in QR mode")
+        # Fortnox now often shows QR directly — this is expected
+        logger.debug("bankid_qr_button_not_found", msg="QR likely already visible")
 
 
 def _extract_bankid_uri(page: Page) -> str | None:

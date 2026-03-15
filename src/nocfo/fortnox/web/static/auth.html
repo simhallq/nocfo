@@ -148,7 +148,10 @@
         // Don't show QR on mobile — it can't be scanned from the same device
       } else {
         // On desktop: show QR for scanning from another device
-        img.src = 'data:image/png;base64,' + e.data;
+        // Detect SVG vs PNG based on decoded content
+        var d = e.data;
+        try { var t = atob(d.substring(0, 20)); } catch(x) { var t = ''; }
+        img.src = (t.indexOf('<svg') >= 0 ? 'data:image/svg+xml;base64,' : 'data:image/png;base64,') + d;
         img.style.display = 'block';
         subtitle.textContent = 'Skanna QR-koden med BankID-appen';
         status.textContent = 'Skanna QR-koden med BankID-appen';
