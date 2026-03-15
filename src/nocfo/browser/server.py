@@ -5,6 +5,8 @@ import logging
 import os
 import queue
 import signal
+import socket
+import subprocess
 import threading
 from http.server import ThreadingHTTPServer
 
@@ -102,6 +104,24 @@ def create_server(
     BrowserAPIHandler.cdp_port = cdp_port
     BrowserAPIHandler.funnel_base = funnel_base
     BrowserAPIHandler.sessions_dir = sessions_dir
+
+    # Fail fast with actionable message if port is already in use
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(1)
+        if s.connect_ex(("127.0.0.1", port)) == 0:
+            pid = "?"
+            try:
+                out = subprocess.check_output(
+                    ["lsof", "-iTCP:%d" % port, "-sTCP:LISTEN", "-t"],
+                    text=True, stderr=subprocess.DEVNULL,
+                )
+                pid = out.strip().split("\n")[0]
+            except Exception:
+                pass
+            raise OSError(
+                f"Port {port} already in use (PID {pid}). "
+                f"A stale server may be running old code. Kill it first: kill {pid}"
+            )
 
     server = ThreadingHTTPServer(("0.0.0.0", port), BrowserAPIHandler)
     server._pw_worker = worker  # type: ignore[attr-defined]
