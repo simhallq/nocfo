@@ -10,6 +10,8 @@ login:
   bankid_tab:
     description: "the BankID login tab or button on id.fortnox.se"
     selectors:
+      - "#login-method-bankid"
+      - "div[role='link']:has-text('BankID')"
       - "button:has-text('BankID')"
       - "text=Mobilt BankID"
       - "a:has-text('BankID')"
@@ -31,6 +33,7 @@ login:
       - "button:has-text('Försök igen')"
       - "button:has-text('igen')"
       - "a:has-text('Försök igen')"
+      - "button:has-text('Försök')"
   login_form:
     description: "the main login form on id.fortnox.se"
     selectors:

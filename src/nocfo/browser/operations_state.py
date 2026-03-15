@@ -58,6 +58,25 @@ def add_qr_url(op_id: str, url: str) -> None:
             _operations[op_id]["qr_urls"].append(url)
 
 
+def reset_for_retry(op_id: str) -> bool:
+    """Atomically reset an operation for a new auth attempt.
+
+    Sets status to "awaiting_user", clears error, resets _browser_work_started,
+    signals the old stop_event, and creates a fresh stop_event.
+    Returns True if the operation was found and reset.
+    """
+    with _operations_lock:
+        op = _operations.get(op_id)
+        if not op:
+            return False
+        op["status"] = "awaiting_user"
+        op["error"] = None
+        op["_browser_work_started"] = False
+        op["stop_event"].set()  # Signal old threads to exit
+        op["stop_event"] = threading.Event()  # Fresh event for next attempt
+        return True
+
+
 def get_operation(op_id: str) -> dict[str, Any] | None:
     """Get sanitized operation state (strips internal _ keys)."""
     with _operations_lock:

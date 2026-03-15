@@ -244,8 +244,7 @@ class BrowserAPIHandler(BaseHTTPRequestHandler):
         from nocfo.browser.operations_state import (
             get_operation_internal,
             update_operation,
-            _operations,
-            _operations_lock,
+            reset_for_retry,
         )
         from nocfo.browser.tokens import get_token_context
 
@@ -258,10 +257,7 @@ class BrowserAPIHandler(BaseHTTPRequestHandler):
 
         # Auto-retry: if operation failed, reset for new attempt on page refresh
         if op.get("status") == "failed":
-            update_operation(op_id, status="awaiting_user", error=None)
-            with _operations_lock:
-                if op_id in _operations:
-                    _operations[op_id]["_browser_work_started"] = False
+            reset_for_retry(op_id)
             op = get_operation_internal(op_id)
 
         # Lazy start: trigger BankID flow when user opens the page

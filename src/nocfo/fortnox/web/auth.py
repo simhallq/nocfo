@@ -98,8 +98,13 @@ def bankid_login_with_qr_capture(page: Page, operation_id: str) -> bool:
     """
     from nocfo.browser.operations_state import update_operation
 
+    from nocfo.browser.operations_state import get_operation_internal
+
     logger.info("bankid_login_qr_start", operation_id=operation_id)
     update_operation(operation_id, status="waiting_for_qr")
+
+    op_internal = get_operation_internal(operation_id)
+    stop_event = op_internal["stop_event"] if op_internal else None
 
     try:
         # Set up response interceptor for autoStartToken
@@ -117,13 +122,14 @@ def bankid_login_with_qr_capture(page: Page, operation_id: str) -> bool:
             logger.warning("bankid_tab_not_found", msg="May already be on BankID page")
 
         # Wait for same-device view to load and capture bankid:// URI
-        time.sleep(3)
-        uri = _extract_bankid_uri(page)
+        uri = None
+        for _ in range(6):
+            time.sleep(0.5)
+            uri = _extract_bankid_uri(page)
+            if uri:
+                break
         if uri:
-            from nocfo.browser.operations_state import _operations, _operations_lock
-            with _operations_lock:
-                if operation_id in _operations:
-                    _operations[operation_id]["_bankid_uri"] = uri
+            update_operation(operation_id, _bankid_uri=uri)
             logger.info("bankid_uri_captured_before_qr", uri=uri[:50])
 
         # Now switch to QR mode for desktop users (same auth order)
@@ -137,14 +143,11 @@ def bankid_login_with_qr_capture(page: Page, operation_id: str) -> bool:
         stale_since: float | None = None
         QR_STALE_THRESHOLD = 15  # seconds before retrying
 
-        while time.time() < deadline:
+        while time.time() < deadline and not (stop_event and stop_event.is_set()):
             # Capture QR data (fast JS eval)
             qr = capture_fortnox_qr(page)
             if qr:
-                from nocfo.browser.operations_state import _operations, _operations_lock
-                with _operations_lock:
-                    if operation_id in _operations:
-                        _operations[operation_id]["_qr_data"] = qr
+                update_operation(operation_id, _qr_data=qr)
 
                 # Track stale QR for retry logic
                 if qr != last_qr:
@@ -254,10 +257,8 @@ def _setup_bankid_intercept(page: Page, operation_id: str) -> None:
             if token:
                 uri = f"bankid:///?autostarttoken={token}&redirect=null"
                 logger.info("bankid_autostart_captured", url=url)
-                from nocfo.browser.operations_state import _operations, _operations_lock
-                with _operations_lock:
-                    if operation_id in _operations:
-                        _operations[operation_id]["_bankid_uri"] = uri
+                from nocfo.browser.operations_state import update_operation
+                update_operation(operation_id, _bankid_uri=uri)
         except Exception:
             pass
 
@@ -339,18 +340,10 @@ def _click_retry_button(page: Page) -> bool:
     Returns True if the button was found and clicked.
     """
     try:
-        selectors.click(page, "login.bankid_retry_button", timeout=3000)
+        selectors.click(page, "login.bankid_retry_button", timeout=5000)
         logger.info("bankid_retry_button_clicked")
         return True
     except PlaywrightTimeout:
-        # Try text-based fallback selectors
-        for sel in ["button:has-text('igen')", "button:has-text('Försök')", "a:has-text('igen')"]:
-            try:
-                page.click(sel, timeout=2000)
-                logger.info("bankid_retry_fallback_clicked", selector=sel)
-                return True
-            except PlaywrightTimeout:
-                continue
         logger.warning("bankid_retry_button_not_found")
         return False
 

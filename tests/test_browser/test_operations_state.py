@@ -6,6 +6,7 @@ from nocfo.browser.operations_state import (
     get_operation_internal,
     mark_browser_work_started,
     new_operation,
+    reset_for_retry,
     update_operation,
     _operations,
     _operations_lock,
@@ -163,3 +164,40 @@ class TestMarkBrowserWorkStarted:
 
         assert results.count(True) == 1
         assert results.count(False) == 9
+
+
+class TestResetForRetry:
+    def setup_method(self):
+        _clear_operations()
+
+    def test_resets_status_and_error(self):
+        op_id = new_operation("auth")
+        update_operation(op_id, status="failed", error="Timeout")
+        assert reset_for_retry(op_id) is True
+        op = get_operation(op_id)
+        assert op["status"] == "awaiting_user"
+        assert op["error"] is None
+
+    def test_resets_browser_work_started(self):
+        op_id = new_operation("auth")
+        mark_browser_work_started(op_id)
+        assert mark_browser_work_started(op_id) is False  # Already started
+        reset_for_retry(op_id)
+        assert mark_browser_work_started(op_id) is True  # Re-enabled
+
+    def test_signals_old_stop_event_and_creates_new(self):
+        op_id = new_operation("auth")
+        with _operations_lock:
+            old_event = _operations[op_id]["stop_event"]
+        assert not old_event.is_set()
+
+        reset_for_retry(op_id)
+
+        assert old_event.is_set()  # Old event signaled
+        with _operations_lock:
+            new_event = _operations[op_id]["stop_event"]
+        assert new_event is not old_event
+        assert not new_event.is_set()  # Fresh event
+
+    def test_nonexistent_operation_returns_false(self):
+        assert reset_for_retry("nonexistent") is False
