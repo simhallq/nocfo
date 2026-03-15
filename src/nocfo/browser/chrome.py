@@ -84,6 +84,27 @@ def launch_chrome(
     return proc
 
 
+def ensure_chrome_running(
+    cdp_port: int = DEFAULT_CDP_PORT,
+    user_data_dir: Path = DEFAULT_PROFILE_DIR,
+) -> bool:
+    """Ensure Chrome is running and reachable on the given CDP port.
+
+    If Chrome is not reachable, attempts to launch it.
+    Returns True if Chrome is (now) reachable, False on failure.
+    """
+    if is_cdp_reachable(cdp_port):
+        return True
+
+    logger.info("chrome_not_reachable", port=cdp_port, action="launching")
+    try:
+        launch_chrome(port=cdp_port, profile_dir=user_data_dir, wait=True)
+        return True
+    except Exception as e:
+        logger.error("chrome_launch_failed", port=cdp_port, error=str(e))
+        return False
+
+
 def connect(port: int = DEFAULT_CDP_PORT) -> tuple:
     """Connect to Chrome via CDP and return (playwright, browser).
 

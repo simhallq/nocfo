@@ -100,6 +100,7 @@ def trigger_bankid_flow(op_id: str, pw_worker, sessions_dir: str) -> None:
                 update_operation(op_id, status="failed", error=str(e))
             finally:
                 page.close()
+                ctx.close()
 
         try:
             pw_worker.submit(auth_work)
@@ -140,15 +141,20 @@ def handle_reconciliation_run(handler: BrowserAPIHandler) -> None:
     from nocfo.fortnox.web.operations.reconciliation import run_reconciliation
 
     body = handler._read_body()
+    customer_id = body.get("customer_id")
     account = body.get("account")
     matches = body.get("matches", [])
 
+    if not customer_id:
+        handler._send_json({"error": "customer_id is required"}, status=400)
+        return
     if not account:
         handler._send_json({"error": "account is required"}, status=400)
         return
 
-    result = handler._with_page(
-        lambda page: run_reconciliation(page, account=account, matches=matches)
+    result = handler._with_customer_page(
+        customer_id,
+        lambda page: run_reconciliation(page, account=account, matches=matches),
     )
     handler._send_json(result)
 
@@ -159,13 +165,19 @@ def handle_period_close(handler: BrowserAPIHandler) -> None:
     from nocfo.fortnox.web.operations.period_closing import close_period
 
     body = handler._read_body()
+    customer_id = body.get("customer_id")
     period = body.get("period")
 
+    if not customer_id:
+        handler._send_json({"error": "customer_id is required"}, status=400)
+        return
     if not period:
         handler._send_json({"error": "period is required"}, status=400)
         return
 
-    result = handler._with_page(lambda page: close_period(page, period=period))
+    result = handler._with_customer_page(
+        customer_id, lambda page: close_period(page, period=period)
+    )
     handler._send_json(result)
 
 
@@ -174,7 +186,14 @@ def handle_reports_discover(handler: BrowserAPIHandler) -> None:
     """POST /reports/discover — Discover Fortnox internal report API endpoints."""
     from nocfo.fortnox.web.operations.reports import discover_report_api
 
-    result = handler._with_page(discover_report_api)
+    body = handler._read_body()
+    customer_id = body.get("customer_id")
+
+    if not customer_id:
+        handler._send_json({"error": "customer_id is required"}, status=400)
+        return
+
+    result = handler._with_customer_page(customer_id, discover_report_api)
     handler._send_json(result)
 
 
@@ -184,15 +203,20 @@ def handle_reports_download(handler: BrowserAPIHandler) -> None:
     from nocfo.fortnox.web.operations.reports import download_report
 
     body = handler._read_body()
+    customer_id = body.get("customer_id")
     report_type = body.get("type")
     period = body.get("period")
 
+    if not customer_id:
+        handler._send_json({"error": "customer_id is required"}, status=400)
+        return
     if not report_type or not period:
         handler._send_json({"error": "type and period are required"}, status=400)
         return
 
-    result = handler._with_page(
-        lambda page: download_report(page, report_type=report_type, period=period)
+    result = handler._with_customer_page(
+        customer_id,
+        lambda page: download_report(page, report_type=report_type, period=period),
     )
 
     # If the result contains file data, send as file download
@@ -212,7 +236,14 @@ def handle_rules_list(handler: BrowserAPIHandler) -> None:
     """POST /rules/list — List current Regelverk."""
     from nocfo.fortnox.web.operations.rules import list_rules
 
-    result = handler._with_page(list_rules)
+    body = handler._read_body()
+    customer_id = body.get("customer_id")
+
+    if not customer_id:
+        handler._send_json({"error": "customer_id is required"}, status=400)
+        return
+
+    result = handler._with_customer_page(customer_id, list_rules)
     handler._send_json(result)
 
 
@@ -222,7 +253,14 @@ def handle_rules_sync(handler: BrowserAPIHandler) -> None:
     from nocfo.fortnox.web.operations.rules import sync_rules
 
     body = handler._read_body()
+    customer_id = body.get("customer_id")
     rules = body.get("rules", [])
 
-    result = handler._with_page(lambda page: sync_rules(page, rules=rules))
+    if not customer_id:
+        handler._send_json({"error": "customer_id is required"}, status=400)
+        return
+
+    result = handler._with_customer_page(
+        customer_id, lambda page: sync_rules(page, rules=rules)
+    )
     handler._send_json(result)

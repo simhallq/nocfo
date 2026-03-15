@@ -5,14 +5,21 @@ import threading
 import time
 from typing import Any
 
+import structlog
+
+logger = structlog.get_logger()
 
 _operations: dict[str, dict[str, Any]] = {}
 _operations_lock = threading.Lock()
+
+# Default TTL for operations (10 minutes)
+_DEFAULT_TTL = 600
 
 
 def new_operation(op_type: str, customer_id: str | None = None, initial_status: str = "pending") -> str:
     """Create a new operation and return its ID."""
     op_id = secrets.token_urlsafe(16)
+    now = time.time()
     with _operations_lock:
         _operations[op_id] = {
             "id": op_id,
@@ -23,7 +30,9 @@ def new_operation(op_type: str, customer_id: str | None = None, initial_status: 
             "result": None,
             "error": None,
             "stop_event": threading.Event(),
-            "created": time.time(),
+            "created": now,
+            "expires": now + _DEFAULT_TTL,
+            "_last_heartbeat": now,
             "_browser_work_started": False,
         }
     return op_id
@@ -49,6 +58,14 @@ def update_operation(op_id: str, **kwargs: Any) -> None:
     with _operations_lock:
         if op_id in _operations:
             _operations[op_id].update(kwargs)
+            _operations[op_id]["_last_heartbeat"] = time.time()
+
+
+def heartbeat(op_id: str) -> None:
+    """Update the heartbeat timestamp for an operation."""
+    with _operations_lock:
+        if op_id in _operations:
+            _operations[op_id]["_last_heartbeat"] = time.time()
 
 
 def add_qr_url(op_id: str, url: str) -> None:
@@ -72,9 +89,28 @@ def reset_for_retry(op_id: str) -> bool:
         op["status"] = "awaiting_user"
         op["error"] = None
         op["_browser_work_started"] = False
+        op["_last_heartbeat"] = time.time()
+        op["expires"] = time.time() + _DEFAULT_TTL
         op["stop_event"].set()  # Signal old threads to exit
         op["stop_event"] = threading.Event()  # Fresh event for next attempt
         return True
+
+
+def cleanup_expired_operations() -> int:
+    """Remove operations whose TTL has expired. Returns count of removed operations."""
+    now = time.time()
+    expired_ids = []
+    with _operations_lock:
+        for op_id, op in _operations.items():
+            if now > op.get("expires", float("inf")):
+                expired_ids.append(op_id)
+        for op_id in expired_ids:
+            # Signal stop_event so any polling threads exit
+            _operations[op_id]["stop_event"].set()
+            del _operations[op_id]
+    if expired_ids:
+        logger.info("operations_cleanup", removed=len(expired_ids), ids=expired_ids)
+    return len(expired_ids)
 
 
 def get_operation(op_id: str) -> dict[str, Any] | None:
@@ -101,3 +137,19 @@ def get_operation_internal(op_id: str) -> dict[str, Any] | None:
         if op:
             return dict(op)
     return None
+
+
+# --- Background cleanup thread ---
+
+def _cleanup_loop() -> None:
+    """Background loop that periodically removes expired operations."""
+    while True:
+        try:
+            time.sleep(60)
+            cleanup_expired_operations()
+        except Exception:
+            pass  # Daemon thread — never crash
+
+
+_cleanup_thread = threading.Thread(target=_cleanup_loop, daemon=True, name="op-cleanup")
+_cleanup_thread.start()

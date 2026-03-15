@@ -18,7 +18,7 @@ logger = structlog.get_logger()
 FORTNOX_LOGIN_URL = "https://id.fortnox.se"
 TENANT_SELECT_URL = "https://apps.fortnox.se/login-fortnox-id/tenant-select"
 FORTNOX_APP_DOMAIN = "apps2.fortnox.se"
-LOGIN_TIMEOUT = 300  # seconds to wait for BankID scan (allows ~10 QR retry cycles)
+LOGIN_TIMEOUT = 120  # seconds to wait for BankID scan (QR expires every ~30s, 2 min is plenty)
 POLL_INTERVAL = 2  # seconds between auth status checks
 QR_POLL_INTERVAL = 0.8  # seconds between QR captures
 

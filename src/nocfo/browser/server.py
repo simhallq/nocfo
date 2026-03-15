@@ -30,12 +30,20 @@ class PlaywrightWorker:
     Playwright's sync API is bound to the greenlet/thread where sync_playwright
     was started. HTTP requests arrive on different threads, so we marshal all
     Playwright work through a queue to a single worker thread.
+
+    Features lazy CDP connection (connects on first submit) and automatic
+    reconnect on TargetClosedError / connection errors.
     """
+
+    # Counter for unique thread names when multiple workers exist
+    _instance_counter = 0
 
     def __init__(self, cdp_port: int) -> None:
         self._cdp_port = cdp_port
         self._queue: queue.Queue = queue.Queue()
-        self._thread = threading.Thread(target=self._run, daemon=True, name="playwright-worker")
+        PlaywrightWorker._instance_counter += 1
+        name = f"playwright-worker-{PlaywrightWorker._instance_counter}"
+        self._thread = threading.Thread(target=self._run, daemon=True, name=name)
         self._pw = None
         self._browser = None
         self._ready = threading.Event()
@@ -50,20 +58,62 @@ class PlaywrightWorker:
         self._queue.put(None)  # sentinel
         self._thread.join(timeout=5)
 
-    def submit(self, fn):
-        """Submit a callable to run on the Playwright thread. Blocks until done."""
+    def submit(self, fn, timeout: float = 60):
+        """Submit a callable to run on the Playwright thread. Blocks until done.
+
+        Args:
+            fn: Callable that receives the browser instance.
+            timeout: Max seconds to wait for the result. Default 60s.
+
+        Raises:
+            TimeoutError: If the operation does not complete within timeout.
+        """
         result_queue: queue.Queue = queue.Queue()
         self._queue.put((fn, result_queue))
-        ok, value = result_queue.get()
+        try:
+            ok, value = result_queue.get(timeout=timeout)
+        except queue.Empty:
+            raise TimeoutError(
+                f"Playwright operation timed out after {timeout}s"
+            )
         if ok:
             return value
         raise value
 
+    def is_healthy(self) -> bool:
+        """Check if the CDP connection is alive."""
+        try:
+            if self._browser:
+                self._browser.version
+                return True
+        except Exception:
+            pass
+        return False
+
+    def _connect(self) -> None:
+        """Establish (or re-establish) the CDP connection.
+
+        Called from the worker thread only.
+        """
+        # Tear down existing connection if any
+        if self._pw:
+            try:
+                self._pw.stop()
+            except Exception:
+                pass
+            self._pw = None
+            self._browser = None
+
+        self._pw, self._browser = chrome.connect(self._cdp_port)
+        logger.info("cdp_connection_established", cdp_port=self._cdp_port,
+                     thread=self._thread.name)
+
     def _run(self) -> None:
         """Worker loop — runs on the dedicated Playwright thread."""
-        self._pw, self._browser = chrome.connect(self._cdp_port)
+        self._connect()
         self._ready.set()
-        logger.info("playwright_worker_started", cdp_port=self._cdp_port)
+        logger.info("playwright_worker_started", cdp_port=self._cdp_port,
+                     thread=self._thread.name)
 
         while True:
             item = self._queue.get()
@@ -74,13 +124,58 @@ class PlaywrightWorker:
                 result = fn(self._browser)
                 result_queue.put((True, result))
             except Exception as e:
+                # Attempt reconnect on connection-related errors
+                if self._is_connection_error(e):
+                    logger.warning("cdp_connection_lost", error=str(e),
+                                   thread=self._thread.name, action="reconnecting")
+                    try:
+                        self._connect()
+                        # Retry once after reconnect
+                        result = fn(self._browser)
+                        result_queue.put((True, result))
+                        continue
+                    except Exception as retry_err:
+                        result_queue.put((False, retry_err))
+                        continue
                 result_queue.put((False, e))
 
         # Cleanup
         try:
-            self._pw.stop()
+            if self._pw:
+                self._pw.stop()
         except Exception:
             pass
+
+    @staticmethod
+    def _is_connection_error(exc: Exception) -> bool:
+        """Check if an exception indicates a lost CDP connection."""
+        err_name = type(exc).__name__
+        if err_name in ("TargetClosedError", "ConnectionError"):
+            return True
+        msg = str(exc).lower()
+        if "target closed" in msg or "connection" in msg or "browser has been closed" in msg:
+            return True
+        return False
+
+
+class PlaywrightWorkerPool:
+    """Pool of Playwright workers sharing the same Chrome CDP connection.
+
+    Separates auth (long-running BankID flows) from ops (fast operations)
+    so they don't block each other.
+    """
+
+    def __init__(self, cdp_port: int) -> None:
+        self.auth_worker = PlaywrightWorker(cdp_port)
+        self.ops_worker = PlaywrightWorker(cdp_port)
+
+    def start(self) -> None:
+        self.auth_worker.start()
+        self.ops_worker.start()
+
+    def stop(self) -> None:
+        self.auth_worker.stop()
+        self.ops_worker.stop()
 
 
 def create_server(
@@ -95,11 +190,12 @@ def create_server(
 
     Uses ThreadingHTTPServer to support concurrent SSE connections.
     """
-    worker = PlaywrightWorker(cdp_port)
-    worker.start()
+    pool = PlaywrightWorkerPool(cdp_port)
+    pool.start()
 
     # Configure handler class attributes
-    BrowserAPIHandler.pw_worker = worker  # type: ignore[attr-defined]
+    BrowserAPIHandler.pw_worker_pool = pool  # type: ignore[attr-defined]
+    BrowserAPIHandler.pw_worker = pool.ops_worker  # type: ignore[attr-defined]  # backward compat
     BrowserAPIHandler.auth_token = auth_token
     BrowserAPIHandler.cdp_port = cdp_port
     BrowserAPIHandler.funnel_base = funnel_base
@@ -124,7 +220,7 @@ def create_server(
             )
 
     server = ThreadingHTTPServer(("0.0.0.0", port), BrowserAPIHandler)
-    server._pw_worker = worker  # type: ignore[attr-defined]
+    server._pw_worker_pool = pool  # type: ignore[attr-defined]
 
     logger.info(
         "server_created",
@@ -171,7 +267,7 @@ def run_server(
         server.serve_forever()
     finally:
         logger.info("server_cleanup")
-        server._pw_worker.stop()  # type: ignore[attr-defined]
+        server._pw_worker_pool.stop()  # type: ignore[attr-defined]
 
 
 def main() -> None:

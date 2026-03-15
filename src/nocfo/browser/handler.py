@@ -11,6 +11,7 @@ from urllib.parse import parse_qs, urlparse
 import structlog
 
 from nocfo.browser import chrome
+from nocfo.fortnox.web.session import load_session, save_session
 
 logger = structlog.get_logger()
 
@@ -19,14 +20,16 @@ class BrowserAPIHandler(BaseHTTPRequestHandler):
     """Request handler for the Browser API HTTP server.
 
     Attributes set by the server:
-        pw_worker: PlaywrightWorker for marshalling browser operations
+        pw_worker_pool: PlaywrightWorkerPool with auth_worker and ops_worker
+        pw_worker: Alias for pw_worker_pool.ops_worker (backward compat)
         auth_token: Bearer token for API authentication
         cdp_port: Chrome CDP port
         funnel_base: Tailscale Funnel base URL for BankID QR
         sessions_dir: Per-customer session cookies directory
     """
 
-    pw_worker: Any  # PlaywrightWorker (avoid circular import)
+    pw_worker_pool: Any  # PlaywrightWorkerPool (avoid circular import)
+    pw_worker: Any  # PlaywrightWorker (backward compat, points to ops_worker)
     auth_token: str
     cdp_port: int
     funnel_base: str = ""
@@ -125,6 +128,28 @@ class BrowserAPIHandler(BaseHTTPRequestHandler):
                 return fn(pages[0])
             page = ctx.new_page()
             return fn(page)
+
+        return self.pw_worker.submit(work)
+
+    def _with_customer_page(self, customer_id: str, fn: Callable) -> Any:
+        """Run fn(page) on the Playwright thread with customer-specific session.
+
+        Creates an isolated browser context, injects the customer's cookies,
+        runs the operation, saves updated cookies, then tears down context.
+        """
+        def work(browser):
+            ctx = browser.new_context()
+            try:
+                load_session(ctx, customer_id, sessions_dir=self.sessions_dir)
+                page = ctx.new_page()
+                try:
+                    result = fn(page)
+                    save_session(page, customer_id, sessions_dir=self.sessions_dir)
+                    return result
+                finally:
+                    page.close()
+            finally:
+                ctx.close()
 
         return self.pw_worker.submit(work)
 
@@ -263,7 +288,7 @@ class BrowserAPIHandler(BaseHTTPRequestHandler):
         # Lazy start: trigger BankID flow when user opens the page
         if op.get("status") == "awaiting_user":
             from nocfo.fortnox.web.handlers import trigger_bankid_flow
-            trigger_bankid_flow(op_id, self.pw_worker, self.sessions_dir)
+            trigger_bankid_flow(op_id, self.pw_worker_pool.auth_worker, self.sessions_dir)
 
         self._send_sse_headers()
 
@@ -319,7 +344,7 @@ class BrowserAPIHandler(BaseHTTPRequestHandler):
 
                 time.sleep(0.4)
         except (BrokenPipeError, ConnectionResetError):
-            pass
+            stop_event.set()  # Signal worker to stop on client disconnect
 
 
 def register_route(method: str, path: str) -> Callable:
