@@ -62,7 +62,8 @@ def auth() -> None:
 
 
 @auth.command()
-def setup() -> None:
+@click.option("--customer", default=None, help="Customer session ID to inject cookies from (e.g. hem-atelier-styrman)")
+def setup(customer: str | None) -> None:
     """Run interactive OAuth setup."""
     from nocfo.config import get_settings
     from nocfo.fortnox.api.auth import TokenManager, exchange_code_for_token, start_authorization
@@ -73,9 +74,12 @@ def setup() -> None:
         sys.exit(1)
 
     click.echo("Starting OAuth authorization flow...")
-    click.echo("A browser window will open. Please authorize the application.")
+    if customer:
+        click.echo(f"Using stored session for '{customer}'")
+    else:
+        click.echo("A browser window will open. Please authorize the application.")
 
-    code = start_authorization()
+    code = start_authorization(customer_id=customer)
     click.echo("Authorization code received. Exchanging for tokens...")
 
     async def _exchange():

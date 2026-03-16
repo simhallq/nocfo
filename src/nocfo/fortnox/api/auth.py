@@ -14,7 +14,7 @@ from nocfo.storage.tokens import TokenStore
 
 logger = structlog.get_logger()
 
-SCOPES = "companyinformation"
+SCOPES = "bookkeeping supplierinvoice invoice payment settings companyinformation customer supplier inbox connectfile"
 
 
 def _make_callback_handler(result: dict[str, str | None]):
@@ -47,11 +47,13 @@ def _make_callback_handler(result: dict[str, str | None]):
     return OAuthCallbackHandler
 
 
-def start_authorization(timeout: int = 300) -> str:
+def start_authorization(timeout: int = 300, customer_id: str | None = None) -> str:
     """Open browser for Fortnox OAuth authorization and capture the code.
 
     Args:
         timeout: Seconds to wait for the callback before giving up.
+        customer_id: If provided, load stored session cookies for this customer
+                     into a Playwright browser context instead of using the default browser.
 
     Returns the authorization code.
     """
@@ -68,8 +70,12 @@ def start_authorization(timeout: int = 300) -> str:
     }
     auth_url = f"{settings.fortnox_auth_url}/auth?{urlencode(params)}"
 
-    logger.info("opening_browser_for_authorization", url=auth_url)
-    webbrowser.open(auth_url)
+    logger.info("opening_browser_for_authorization", url=auth_url, customer_id=customer_id)
+
+    if customer_id:
+        _open_with_session(auth_url, customer_id, settings)
+    else:
+        webbrowser.open(auth_url)
 
     # Start local server to capture callback
     result: dict[str, str | None] = {"code": None, "state": None, "error": None}
@@ -77,6 +83,7 @@ def start_authorization(timeout: int = 300) -> str:
         ("localhost", settings.oauth_redirect_port),
         _make_callback_handler(result),
     )
+    server.socket.setsockopt(__import__("socket").SOL_SOCKET, __import__("socket").SO_REUSEADDR, 1)
     server.timeout = timeout
     logger.info("waiting_for_oauth_callback", port=settings.oauth_redirect_port)
 
@@ -95,6 +102,51 @@ def start_authorization(timeout: int = 300) -> str:
 
     logger.info("authorization_code_received")
     return code
+
+
+def _open_with_session(auth_url: str, customer_id: str, settings) -> None:
+    """Open the OAuth URL in Chrome via CDP with stored session cookies."""
+    import threading
+
+    from playwright.sync_api import sync_playwright
+
+    from nocfo.fortnox.web.session import load_session
+
+    cdp_url = f"http://localhost:{settings.browser_cdp_port}"
+
+    def _run():
+        pw = sync_playwright().start()
+        try:
+            browser = pw.chromium.connect_over_cdp(cdp_url)
+            context = browser.new_context()
+
+            loaded = load_session(context, customer_id, str(settings.sessions_dir))
+            if not loaded:
+                logger.warning("no_session_found", customer_id=customer_id)
+                print(f"Warning: No stored session for '{customer_id}', opening without cookies")
+
+            page = context.new_page()
+            page.goto(auth_url, wait_until="domcontentloaded", timeout=30000)
+            print(f"Browser opened with '{customer_id}' session. Authorize in the browser window.")
+
+            # Keep browser alive until the callback redirect completes
+            try:
+                page.wait_for_url("**/callback**", timeout=300000)
+                # Wait for the callback page to fully load so the HTTP server receives the code
+                page.wait_for_load_state("load", timeout=10000)
+            except Exception:
+                pass
+
+            # Give the callback server a moment to process, then clean up
+            import time
+            time.sleep(2)
+            context.close()
+        finally:
+            pw.stop()
+
+    # Run in a thread so the HTTP callback server can run on the main thread
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
 
 
 async def exchange_code_for_token(code: str) -> dict[str, Any]:
