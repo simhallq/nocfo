@@ -22,16 +22,14 @@ class FileConnectionService:
     ) -> None:
         """Connect an uploaded file to a voucher as evidence."""
         payload = {
-            "FileConnection": {
+            "VoucherFileConnection": {
                 "FileId": file_id,
-                "EntityType": "voucher",
-                "EntityId": f"{voucher_series}{voucher_number}",
+                "VoucherNumber": str(voucher_number),
+                "VoucherSeries": voucher_series,
             }
         }
-        if voucher_year:
-            payload["FileConnection"]["FinancialYearId"] = voucher_year
 
-        await self._client.post("/fileconnections", json_data=payload)
+        await self._client.post("/voucherfileconnections", json_data=payload)
         logger.info(
             "file_connected_to_voucher",
             file_id=file_id,

@@ -55,6 +55,13 @@ class Account(BaseModel):
     sru: int | None = None
     year: int | None = None
 
+    @field_validator("balance_brought_forward", mode="before")
+    @classmethod
+    def coerce_balance(cls, v: object) -> Decimal:
+        if v is None:
+            return Decimal("0")
+        return Decimal(str(v))
+
 
 class Invoice(BaseModel):
     """A customer invoice."""

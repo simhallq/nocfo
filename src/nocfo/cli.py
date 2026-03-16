@@ -137,6 +137,57 @@ def voucher() -> None:
     pass
 
 
+@voucher.command("from-invoice")
+@click.argument("pdf_path", type=click.Path(exists=True))
+@click.option("--date", "txn_date", default=None, help="Transaction date override (YYYY-MM-DD)")
+@click.option("--customer", default=None, help="Customer ID for company-specific rules (e.g. hem-atelier-styrman)")
+@click.option("--history", is_flag=True, help="Include recent voucher history for supplier precedent")
+@click.option("--post", is_flag=True, help="Actually create the voucher (default is dry-run preview)")
+def voucher_from_invoice(pdf_path: str, txn_date: str | None, customer: str | None, history: bool, post: bool) -> None:
+    """Analyze a PDF invoice and create a voucher from it."""
+    from datetime import date as date_cls
+    from pathlib import Path
+
+    from nocfo.bookkeeping.invoice_to_voucher import create_voucher_from_invoice
+    from nocfo.config import get_settings
+    from nocfo.fortnox.api.auth import TokenManager
+    from nocfo.fortnox.api.client import FortnoxClient
+
+    settings = get_settings()
+    if not settings.validate_anthropic_key():
+        click.echo("Error: ANTHROPIC_API_KEY must be set in .env")
+        sys.exit(1)
+
+    override_date = date_cls.fromisoformat(txn_date) if txn_date else None
+
+    async def _run():
+        manager = TokenManager()
+        await manager.initialize()
+        async with FortnoxClient(token_manager=manager) as client:
+            return await create_voucher_from_invoice(
+                pdf_path=Path(pdf_path),
+                client=client,
+                anthropic_api_key=settings.anthropic_api_key,
+                transaction_date=override_date,
+                customer_id=customer,
+                fetch_history=history,
+                dry_run=not post,
+            )
+
+    analysis, voucher = run_async(_run())
+
+    click.echo("\n" + analysis.preview() + "\n")
+
+    if post and voucher:
+        click.echo(
+            f"Voucher created: {voucher.voucher_series}{voucher.voucher_number} "
+            f"on {voucher.transaction_date}"
+        )
+        click.echo("Invoice PDF uploaded and attached.")
+    elif not post:
+        click.echo("DRY RUN — no voucher created. Use --post to create it.")
+
+
 @voucher.command("list")
 @click.option("--series", default="A", help="Voucher series")
 def voucher_list(series: str) -> None:

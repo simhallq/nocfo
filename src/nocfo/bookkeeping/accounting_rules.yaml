@@ -1,0 +1,113 @@
+# Swedish accounting rules for invoice-to-voucher analysis.
+# Used by prompt_builder.py to give Claude structured context
+# for making correct bookkeeping decisions.
+
+thresholds:
+  prisbasbelopp:
+    2024: 57300
+    2025: 58800
+    2026: 59200
+  asset_vs_expense:
+    rule: >
+      Inventarier med anskaffningsvärde UNDER halva prisbasbeloppet (exklusive moms)
+      ska kostnadsföras direkt som förbrukningsinventarier (konto 5410).
+      Inventarier ÖVER tröskeln ska aktiveras i balansräkningen (12xx-konton).
+      Beloppet som jämförs mot tröskeln är alltid exklusive moms.
+    expense_account: 5410
+    exceptions:
+      - "Konst och samlarföremål: alltid anläggningstillgång (1291) oavsett belopp — de ökar i värde"
+      - "Inventarier med naturligt samband bedöms gemensamt (sammanlagt anskaffningsvärde)"
+
+vat_rules:
+  - rate: 25
+    account: 2640
+    applies_to: "De flesta varor och tjänster"
+  - rate: 12
+    account: 2640
+    applies_to: "Livsmedel, hotell, restaurang, konst, kulturella evenemang"
+  - rate: 6
+    account: 2640
+    applies_to: "Böcker, tidningar, kollektivtrafik"
+  - name: reverse_charge
+    rate: 0
+    note: >
+      Tjänster från utlandet (EU/icke-EU): ingen svensk moms på fakturan.
+      Köparen redovisar både utgående och ingående moms (omvänd skattskyldighet).
+      Vanligt för: molntjänster, SaaS, konsulttjänster från utlandet.
+      Debitera 2645 (beräknad ingående moms) och kreditera 2614 (utgående moms, omvänd).
+
+account_guidance:
+  - range: "12xx"
+    label: "Materiella anläggningstillgångar"
+    rule: "BARA för inventarier med anskaffningsvärde (ex moms) ÖVER halva prisbasbeloppet"
+    accounts:
+      1210: "Byggnader"
+      1220: "Inventarier och verktyg"
+      1230: "Installationer"
+      1240: "Bilar och transportmedel"
+      1250: "Datorer (BARA om över tröskeln)"
+      1260: "Leasade tillgångar"
+      1290: "Övriga materiella anläggningstillgångar"
+      1291: "Konst och liknande tillgångar (undantag: alltid tillgång)"
+
+  - range: "40xx"
+    label: "Varuinköp"
+    rule: "Varor för vidareförsäljning eller material i kundprojekt"
+    accounts:
+      4010: "Varuinköp"
+      4990: "Lager"
+
+  - range: "50xx"
+    label: "Lokalkostnader"
+    rule: "Hyra, el, städning, reparationer av lokal"
+    accounts:
+      5010: "Lokalhyra"
+      5020: "El och uppvärmning"
+      5090: "Övriga lokalkostnader"
+
+  - range: "54xx"
+    label: "Förbrukningsinventarier och förbrukningsvaror"
+    rule: "Inventarier UNDER tröskeln (halva prisbasbeloppet ex moms), förbrukningsvaror"
+    accounts:
+      5410: "Förbrukningsinventarier (datorer, möbler, utrustning under tröskeln)"
+      5420: "Programvaror"
+      5460: "Förbrukningsvaror"
+      5480: "Arbetskläder och skyddsmaterial"
+
+  - range: "59xx-69xx"
+    label: "Övriga externa kostnader"
+    rule: "Tjänster, kontorskostnader, resor, marknadsföring"
+    accounts:
+      5910: "Annonsering"
+      6071: "Representation, avdragsgill"
+      6110: "Kontorsmateriel"
+      6212: "Telekommunikation"
+      6310: "Företagsförsäkringar"
+      6530: "Redovisning och revision"
+      6540: "Juridiska kostnader"
+      6570: "Bankavgifter"
+      6900: "Övriga externa kostnader"
+
+  - range: "70xx-77xx"
+    label: "Personalkostnader"
+    rule: "Löner, arbetsgivaravgifter, pensioner"
+    accounts:
+      7210: "Löner till tjänstemän"
+      7510: "Arbetsgivaravgifter"
+      7533: "Särskild löneskatt"
+
+companies:
+  hem-atelier-styrman:
+    name: "Hem Atelier Styrmans AB"
+    description: "Inredningsstudio. Köper konst, möbler, designföremål för kundprojekt och showroom."
+    notes:
+      - "Konstinköp är alltid anläggningstillgångar (1291) oavsett belopp"
+      - "Möbler/inredning för kundprojekt kan vara varuinköp (4010) istället för inventarier"
+      - "Designföremål för showroom → 1220 eller 5410 beroende på belopp"
+
+  simon-hallqvist-invest:
+    name: "Simon Hällqvist Invest AB"
+    description: "Holdingbolag och investeringsbolag."
+    notes:
+      - "SaaS-tjänster från USA/EU → omvänd skattskyldighet"
+      - "Vanliga kostnader: programvara, kontorsutrustning, rådgivning"
