@@ -104,6 +104,7 @@ class PlaywrightWorker:
             self._pw = None
             self._browser = None
 
+        chrome.ensure_chrome_running(self._cdp_port)
         self._pw, self._browser = chrome.connect(self._cdp_port)
         logger.info("cdp_connection_established", cdp_port=self._cdp_port,
                      thread=self._thread.name)

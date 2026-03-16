@@ -140,37 +140,30 @@ def bankid_login_with_qr_capture(page: Page, operation_id: str) -> bool:
         time.sleep(2)
 
         # Extract bankid:// URI by clicking "BankID on this device" button.
-        # This triggers a redirect to bankid:///?autostarttoken=... which we
-        # intercept before it navigates away.
+        # This triggers an API call that includes the autoStartToken (needed
+        # for mobile deep link). Side effect: switches page away from QR mode.
         bankid_uri = _click_same_device_and_capture_uri(page)
         if bankid_uri:
             update_operation(operation_id, _bankid_uri=bankid_uri)
             logger.info("bankid_uri_captured", uri=bankid_uri[:60])
 
-        # Check if QR is already visible (new Fortnox flow goes directly to QR)
+            # Clicking "BankID on this device" switched away from QR mode.
+            # Re-click BankID tab to restart the QR flow for desktop scanning.
+            try:
+                selectors.click(page, "login.bankid_tab", timeout=5000)
+                logger.info("bankid_tab_reclicked_for_qr")
+                time.sleep(2)
+            except PlaywrightTimeout:
+                logger.warning("bankid_tab_reclick_failed")
+
+        # Check if QR is already visible
         qr_already_visible = capture_fortnox_qr(page) is not None
         logger.info("bankid_post_tab_state", url=page.url[:80], qr_visible=qr_already_visible)
 
         if not qr_already_visible:
-            # Try to capture bankid:// URI from same-device view
-            uri = _extract_bankid_uri(page)
-            if uri:
-                update_operation(operation_id, _bankid_uri=uri)
-                logger.info("bankid_uri_captured_before_qr", uri=uri[:50])
-
-            # Switch to QR mode (old Fortnox flow had a separate step)
+            # Switch to QR mode
             _click_qr_mode(page)
             time.sleep(1)
-        else:
-            # QR already showing — also try to capture bankid:// URI
-            uri = _extract_bankid_uri(page)
-            if uri:
-                update_operation(operation_id, _bankid_uri=uri)
-                logger.info("bankid_uri_captured", uri=uri[:50])
-
-        # Note: Fortnox does not expose autoStartToken, so bankid:// deep link
-        # for same-device mobile auth is not possible. QR scanning from another
-        # device is the only supported flow.
 
         # Poll loop: capture QR, detect stale QR, and check for login completion
         deadline = time.time() + LOGIN_TIMEOUT
@@ -185,6 +178,13 @@ def bankid_login_with_qr_capture(page: Page, operation_id: str) -> bool:
             # Check if login completed (before QR capture for fast detection)
             if _is_logged_in(page):
                 logger.info("bankid_login_qr_success", url=page.url)
+                # Navigate to apps.fortnox.se to acquire full cookie set
+                # (id.fortnox.se cookies alone are insufficient for API access)
+                try:
+                    page.goto(TENANT_SELECT_URL, wait_until="domcontentloaded", timeout=15000)
+                    logger.info("bankid_tenant_select_loaded", url=page.url[:80])
+                except Exception as e:
+                    logger.warning("bankid_tenant_select_failed", error=str(e))
                 update_operation(operation_id, status="authenticated")
                 return True
 

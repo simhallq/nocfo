@@ -164,16 +164,18 @@
     evtSource.addEventListener('bankid_uri', function(e) {
       var uri = e.data;
       if (uri && uri !== lastUri) {
-        bankidBtn.href = uri;
-        bankidBtn.style.display = 'block';
-        spinner.style.display = 'none';
         lastUri = uri;
+        bankidBtn.href = uri;
 
         if (isMobile) {
+          // Mobile: show "Öppna BankID" button (QR can't be scanned from same device)
+          bankidBtn.style.display = 'block';
+          spinner.style.display = 'none';
           subtitle.textContent = 'Tryck på knappen för att logga in';
           status.textContent = 'Öppna BankID-appen';
           status.className = 'status-waiting';
         }
+        // Desktop: URI stored silently — QR code is the primary flow
       }
     });
 
