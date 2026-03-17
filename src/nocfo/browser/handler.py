@@ -188,11 +188,12 @@ class BrowserAPIHandler(BaseHTTPRequestHandler):
             from nocfo.browser.tokens import validate_token_for_stream, get_token_context
             from nocfo.browser.operations_state import get_operation_internal
             token = params.get("token", [""])[0]
+            is_mobile = params.get("mobile", [""])[0] == "1"
             op_id = validate_token_for_stream(token)
             if not op_id:
                 self._send_json({"error": "invalid or expired token"}, status=403)
                 return
-            self._handle_sse_stream(op_id, token)
+            self._handle_sse_stream(op_id, token, is_mobile=is_mobile)
             return
 
         # Bearer-authenticated endpoints
@@ -259,7 +260,7 @@ class BrowserAPIHandler(BaseHTTPRequestHandler):
             "chrome": {"cdp_reachable": cdp_ok, "port": self.cdp_port},
         })
 
-    def _handle_sse_stream(self, op_id: str, token: str) -> None:
+    def _handle_sse_stream(self, op_id: str, token: str, is_mobile: bool = False) -> None:
         """SSE stream for QR code data and auth status.
 
         Also serves as the trigger for lazy BankID flow:
@@ -288,7 +289,7 @@ class BrowserAPIHandler(BaseHTTPRequestHandler):
         # Lazy start: trigger BankID flow when user opens the page
         if op.get("status") == "awaiting_user":
             from nocfo.fortnox.web.handlers import trigger_bankid_flow
-            trigger_bankid_flow(op_id, self.pw_worker_pool.auth_worker, self.sessions_dir)
+            trigger_bankid_flow(op_id, self.pw_worker_pool.auth_worker, self.sessions_dir, is_mobile=is_mobile)
 
         self._send_sse_headers()
 

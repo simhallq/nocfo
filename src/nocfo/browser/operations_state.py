@@ -97,11 +97,17 @@ def reset_for_retry(op_id: str) -> bool:
 
 
 def cleanup_expired_operations() -> int:
-    """Remove operations whose TTL has expired. Returns count of removed operations."""
+    """Remove operations whose TTL has expired. Returns count of removed operations.
+
+    Operations in 'awaiting_user' status are never cleaned up — the user
+    may open the live_url hours later (async flow).
+    """
     now = time.time()
     expired_ids = []
     with _operations_lock:
         for op_id, op in _operations.items():
+            if op.get("status") == "awaiting_user":
+                continue  # Never expire pending operations
             if now > op.get("expires", float("inf")):
                 expired_ids.append(op_id)
         for op_id in expired_ids:

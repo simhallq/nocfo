@@ -104,18 +104,22 @@ def bankid_login(page: Page) -> dict:
         return {"status": "error", "message": str(e)}
 
 
-def bankid_login_with_qr_capture(page: Page, operation_id: str) -> bool:
+def bankid_login_with_qr_capture(page: Page, operation_id: str, is_mobile: bool = False) -> bool:
     """BankID login flow with QR streaming for remote auth.
 
     Captures QR data and writes it to the operation dict for SSE streaming.
     Token/URL generation is handled by the caller (handle_auth_start).
+
+    When is_mobile=True, clicks "BankID on this device" to capture the
+    bankid:// deep link for the phone. On desktop, goes straight to QR.
+
     Returns True if authenticated, False on timeout/failure.
     """
     from nocfo.browser.operations_state import update_operation
 
     from nocfo.browser.operations_state import get_operation_internal
 
-    logger.info("bankid_login_qr_start", operation_id=operation_id)
+    logger.info("bankid_login_qr_start", operation_id=operation_id, is_mobile=is_mobile)
     update_operation(operation_id, status="waiting_for_qr")
 
     op_internal = get_operation_internal(operation_id)
@@ -128,8 +132,7 @@ def bankid_login_with_qr_capture(page: Page, operation_id: str) -> bool:
         # Navigate to Fortnox login
         page.goto(FORTNOX_LOGIN_URL, wait_until="networkidle", timeout=20000)
 
-        # Click BankID tab first — this shows "BankID på denna enhet" (same-device)
-        # which contains the bankid:// URI we need for mobile deep linking
+        # Click BankID tab to enter the BankID flow
         try:
             selectors.click(page, "login.bankid_tab", timeout=10000)
             logger.info("bankid_tab_clicked")
@@ -139,22 +142,14 @@ def bankid_login_with_qr_capture(page: Page, operation_id: str) -> bool:
         # Wait for BankID page to load after clicking tab
         time.sleep(2)
 
-        # Extract bankid:// URI by clicking "BankID on this device" button.
-        # This triggers an API call that includes the autoStartToken (needed
-        # for mobile deep link). Side effect: switches page away from QR mode.
-        bankid_uri = _click_same_device_and_capture_uri(page)
-        if bankid_uri:
-            update_operation(operation_id, _bankid_uri=bankid_uri)
-            logger.info("bankid_uri_captured", uri=bankid_uri[:60])
-
-            # Clicking "BankID on this device" switched away from QR mode.
-            # Re-click BankID tab to restart the QR flow for desktop scanning.
-            try:
-                selectors.click(page, "login.bankid_tab", timeout=5000)
-                logger.info("bankid_tab_reclicked_for_qr")
-                time.sleep(2)
-            except PlaywrightTimeout:
-                logger.warning("bankid_tab_reclick_failed")
+        if is_mobile:
+            # Mobile: click "BankID on this device" to capture bankid:// deep link.
+            # The response interceptor captures the autoStartToken from the API call.
+            # Page stays on collect view — mobile user signs via deep link, not QR.
+            bankid_uri = _click_same_device_and_capture_uri(page)
+            if bankid_uri:
+                update_operation(operation_id, _bankid_uri=bankid_uri)
+                logger.info("bankid_uri_captured", uri=bankid_uri[:60])
 
         # Check if QR is already visible
         qr_already_visible = capture_fortnox_qr(page) is not None

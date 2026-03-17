@@ -126,7 +126,9 @@
     status.className = 'status-waiting';
     lastUri = '';
 
-    evtSource = new EventSource('/auth/stream?token=' + encodeURIComponent(token));
+    var streamUrl = '/auth/stream?token=' + encodeURIComponent(token);
+    if (isMobile) streamUrl += '&mobile=1';
+    evtSource = new EventSource(streamUrl);
 
     evtSource.addEventListener('context', function() {
       subtitle.textContent = 'Startar BankID...';

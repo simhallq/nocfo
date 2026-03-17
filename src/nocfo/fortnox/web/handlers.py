@@ -67,7 +67,7 @@ def handle_auth_start(handler: BrowserAPIHandler) -> None:
     }, status=202)
 
 
-def trigger_bankid_flow(op_id: str, pw_worker, sessions_dir: str) -> None:
+def trigger_bankid_flow(op_id: str, pw_worker, sessions_dir: str, is_mobile: bool = False) -> None:
     """Start the BankID browser flow for an operation.
 
     Uses mark_browser_work_started() for atomic dedup — safe to call
@@ -92,7 +92,21 @@ def trigger_bankid_flow(op_id: str, pw_worker, sessions_dir: str) -> None:
             page = ctx.new_page()
 
             try:
-                if bankid_login_with_qr_capture(page, op_id):
+                success = bankid_login_with_qr_capture(page, op_id, is_mobile=is_mobile)
+                if not success:
+                    # BankID may have completed just after the poll loop ended.
+                    # Wait briefly and check one more time before giving up.
+                    import time
+                    time.sleep(5)
+                    from nocfo.fortnox.web.auth import _is_logged_in, TENANT_SELECT_URL
+                    if _is_logged_in(page):
+                        logger.info("bankid_late_login_detected")
+                        try:
+                            page.goto(TENANT_SELECT_URL, wait_until="domcontentloaded", timeout=15000)
+                        except Exception:
+                            pass
+                        success = True
+                if success:
                     if customer_id:
                         save_session(page, customer_id, sessions_dir=sessions_dir)
                     update_operation(op_id, status="complete", result={"authenticated": True})
