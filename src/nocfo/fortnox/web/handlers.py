@@ -1,7 +1,10 @@
 """Fortnox route handlers — registered onto BrowserAPIHandler via @register_route."""
 
+import asyncio
 import base64
+import tempfile
 import threading
+from pathlib import Path
 
 import structlog
 
@@ -278,3 +281,193 @@ def handle_rules_sync(handler: BrowserAPIHandler) -> None:
         customer_id, lambda page: sync_rules(page, rules=rules)
     )
     handler._send_json(result)
+
+
+# --- Receipt routes ---
+
+
+@register_route("POST", "/receipts/analyze")
+def handle_receipts_analyze(handler: BrowserAPIHandler) -> None:
+    """POST /receipts/analyze — Analyze a receipt PDF and return proposed voucher entries.
+
+    Dry-run only — no Fortnox write occurs. Returns the full analysis plus a
+    proposed_voucher dict and a human-readable preview for user confirmation.
+
+    Body: {
+        "customer_id": str,
+        "file_path": str,       # absolute path on the server, OR
+        "file_content": str,    # base64-encoded file bytes
+        "filename": str         # required when using file_content (default: "receipt.pdf")
+    }
+    """
+    from nocfo.bookkeeping.invoice_to_voucher import create_voucher_from_invoice
+    from nocfo.config import get_settings
+    from nocfo.fortnox.api.client import FortnoxClient
+
+    body = handler._read_body()
+    customer_id = body.get("customer_id")
+    if not customer_id:
+        handler._send_json({"error": "customer_id required"}, status=400)
+        return
+
+    file_path_str = body.get("file_path")
+    file_content_b64 = body.get("file_content")
+    if not file_path_str and not file_content_b64:
+        handler._send_json({"error": "file_path or file_content required"}, status=400)
+        return
+
+    settings = get_settings()
+    if not settings.anthropic_api_key:
+        handler._send_json({"error": "ANTHROPIC_API_KEY not configured"}, status=500)
+        return
+
+    tmp_path: Path | None = None
+    try:
+        if file_content_b64:
+            pdf_bytes = base64.b64decode(file_content_b64)
+            filename = body.get("filename", "receipt.pdf")
+            suffix = Path(filename).suffix or ".pdf"
+            tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+            tmp.write(pdf_bytes)
+            tmp.close()
+            tmp_path = Path(tmp.name)
+            pdf_path = tmp_path
+        else:
+            pdf_path = Path(file_path_str)
+
+        async def _analyze():
+            async with FortnoxClient() as client:
+                await client._token_manager.initialize()
+                return await create_voucher_from_invoice(
+                    pdf_path,
+                    client,
+                    settings.anthropic_api_key,
+                    customer_id=customer_id,
+                    dry_run=True,
+                )
+
+        analysis, _ = asyncio.run(_analyze())
+        voucher = analysis.to_voucher()
+
+        handler._send_json({
+            "supplier_name": analysis.supplier_name,
+            "invoice_number": analysis.invoice_number,
+            "invoice_date": str(analysis.invoice_date),
+            "payment_date": str(analysis.payment_date),
+            "description": analysis.description,
+            "total_net": str(analysis.total_net),
+            "total_vat": str(analysis.total_vat),
+            "total_gross": str(analysis.total_gross),
+            "vat_rate": analysis.vat_rate,
+            "confidence": analysis.confidence,
+            "notes": analysis.notes,
+            "items": analysis.items,
+            "preview": analysis.preview(),
+            "proposed_voucher": {
+                "description": voucher.description,
+                "voucher_series": voucher.voucher_series,
+                "transaction_date": str(voucher.transaction_date),
+                "rows": [
+                    {
+                        "account": r.account,
+                        "debit": str(r.debit),
+                        "credit": str(r.credit),
+                        "transaction_information": r.transaction_information,
+                    }
+                    for r in voucher.rows
+                ],
+            },
+        })
+    except Exception as e:
+        logger.error("receipt_analysis_failed", error=str(e))
+        handler._send_json({"error": str(e)}, status=500)
+    finally:
+        if tmp_path and tmp_path.exists():
+            tmp_path.unlink()
+
+
+@register_route("POST", "/receipts/book")
+def handle_receipts_book(handler: BrowserAPIHandler) -> None:
+    """POST /receipts/book — Create an approved voucher in Fortnox and attach the PDF.
+
+    Pass the proposed_voucher from /receipts/analyze as the voucher field. Pydantic
+    validates balance (debits == credits) before any Fortnox write.
+
+    Body: {
+        "customer_id": str,
+        "file_path": str,       # absolute path on the server, OR
+        "file_content": str,    # base64-encoded file bytes
+        "filename": str,        # required when using file_content
+        "voucher": {
+            "description": str,
+            "voucher_series": str,
+            "transaction_date": str,  # ISO date
+            "rows": [{"account": int, "debit": str, "credit": str, "transaction_information": str}]
+        }
+    }
+    """
+    from nocfo.fortnox.api.client import FortnoxClient
+    from nocfo.fortnox.api.file_connections import FileConnectionService
+    from nocfo.fortnox.api.inbox import InboxService
+    from nocfo.fortnox.api.models import Voucher
+    from nocfo.fortnox.api.vouchers import VoucherService
+
+    body = handler._read_body()
+    customer_id = body.get("customer_id")
+    if not customer_id:
+        handler._send_json({"error": "customer_id required"}, status=400)
+        return
+
+    voucher_data = body.get("voucher")
+    if not voucher_data:
+        handler._send_json({"error": "voucher required"}, status=400)
+        return
+
+    file_path_str = body.get("file_path")
+    file_content_b64 = body.get("file_content")
+    if not file_path_str and not file_content_b64:
+        handler._send_json({"error": "file_path or file_content required"}, status=400)
+        return
+
+    try:
+        voucher = Voucher.model_validate(voucher_data)
+    except Exception as e:
+        handler._send_json({"error": f"invalid voucher: {e}"}, status=400)
+        return
+
+    tmp_path: Path | None = None
+    try:
+        if file_content_b64:
+            pdf_bytes = base64.b64decode(file_content_b64)
+            filename = body.get("filename", "receipt.pdf")
+            suffix = Path(filename).suffix or ".pdf"
+            tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+            tmp.write(pdf_bytes)
+            tmp.close()
+            tmp_path = Path(tmp.name)
+            pdf_path = tmp_path
+        else:
+            pdf_path = Path(file_path_str)
+
+        async def _book():
+            async with FortnoxClient() as client:
+                await client._token_manager.initialize()
+                created = await VoucherService(client).create(voucher)
+                file_id = await InboxService(client).upload(pdf_path)
+                await FileConnectionService(client).connect_to_voucher(
+                    file_id, created.voucher_series, created.voucher_number
+                )
+                return created
+
+        created = asyncio.run(_book())
+        handler._send_json({
+            "voucher_series": created.voucher_series,
+            "voucher_number": created.voucher_number,
+            "status": "created",
+        })
+    except Exception as e:
+        logger.error("receipt_booking_failed", error=str(e))
+        handler._send_json({"error": str(e)}, status=500)
+    finally:
+        if tmp_path and tmp_path.exists():
+            tmp_path.unlink()
