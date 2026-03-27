@@ -1,0 +1,52 @@
+{
+  "agents": {
+    "defaults": {
+      "model": "anthropic/claude-opus-4-6",
+      "workspace": "/home/node/.openclaw/workspace",
+      "heartbeat": {
+        "every": "30m",
+        "activeHours": {
+          "start": "08:00",
+          "end": "23:00",
+          "timezone": "Europe/Stockholm"
+        },
+        "target": "telegram"
+      },
+      "maxConcurrent": 4,
+      "sandbox": {
+        "mode": "off"
+      },
+      "tools": {
+        "allow": ["web_search", "browser", "exec"],
+        "profiles": "full"
+      }
+    }
+  },
+  "browser": {
+    "enabled": true,
+    "headless": true
+  },
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "botToken": "<TELEGRAM_BOT_TOKEN>",
+      "dmPolicy": "pairing"
+    }
+  },
+  "gateway": {
+    "auth": {
+      "token": "<OPENCLAW_GATEWAY_TOKEN>"
+    }
+  },
+  "plugins": {
+    "entries": {
+      "fortnox": {
+        "enabled": true
+      }
+    }
+  },
+  "session": {
+    "maxMemoryTokens": 40000,
+    "sessionCompactionTriggerTokens": 40000
+  }
+}

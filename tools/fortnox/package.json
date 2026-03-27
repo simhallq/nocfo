@@ -1,0 +1,21 @@
+{
+  "name": "openclaw-plugin-fortnox",
+  "version": "0.1.0",
+  "description": "OpenClaw plugin for Fortnox accounting operations",
+  "type": "module",
+  "main": "dist/index.js",
+  "openclaw": {
+    "type": "plugin"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@sinclair/typebox": "^0.34.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "typescript": "^5.7.0"
+  }
+}

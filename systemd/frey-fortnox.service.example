@@ -1,0 +1,15 @@
+[Unit]
+Description=Frey Fortnox Service
+After=frey-chrome.service
+Requires=frey-chrome.service
+
+[Service]
+Type=simple
+WorkingDirectory=/root/frey/services/fortnox
+EnvironmentFile=/root/frey/services/fortnox/.env
+ExecStart=/root/frey/.venv/bin/fortnox browser start --cdp-port 9222 --port 8790
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

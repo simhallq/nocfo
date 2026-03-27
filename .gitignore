@@ -33,3 +33,13 @@ test-results/
 
 # Token storage
 tokens.json
+
+# Docker
+docker/.env
+
+# OpenClaw (live config has secrets)
+openclaw/openclaw.json
+
+# Workspace memory (synced separately)
+workspace/memory/*.md
+!workspace/memory/.gitkeep
