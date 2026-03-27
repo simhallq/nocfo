@@ -8,7 +8,7 @@ logger = structlog.get_logger()
 
 async def token_refresh_job() -> None:
     """Proactively refresh OAuth tokens."""
-    from fortnox.api.auth import TokenManager
+    from fortnox.fortnox.api.auth import TokenManager
 
     logger.info("job_started", job="token_refresh")
     try:
@@ -23,19 +23,82 @@ async def token_refresh_job() -> None:
 
 
 async def daily_voucher_sync_job() -> None:
-    """Fetch bank transactions, categorize, and create vouchers."""
+    """Fetch Svea Bank transactions and auto-journal high-confidence matches."""
     logger.info("job_started", job="daily_voucher_sync")
-    # TODO: Implement bank transaction fetching and auto-journaling
-    logger.info("job_completed", job="daily_voucher_sync", note="not_yet_implemented")
+    try:
+        from fortnox.fortnox.api.auth import TokenManager
+        from fortnox.fortnox.api.client import FortnoxClient
+        from fortnox.storage.database import Database
+        from fortnox.svea.api.auth import SveaTokenManager
+        from fortnox.svea.api.client import SveaClient
+        from fortnox.svea.api.transactions import SveaTransactionService
+        from fortnox.svea.reconcile import SveaReconciliationService
+        from fortnox.svea.sync import TransactionSyncService
+
+        svea_manager = SveaTokenManager()
+        await svea_manager.initialize()
+        if not svea_manager.is_authenticated:
+            logger.warning("job_skipped", job="daily_voucher_sync", reason="svea_not_authenticated")
+            return
+
+        fortnox_manager = TokenManager()
+        await fortnox_manager.initialize()
+
+        db = Database()
+        conn = await db.connect()
+
+        try:
+            async with SveaClient(token_manager=svea_manager) as svea_client:
+                # Sync transactions (incremental from last cursor)
+                txn_service = SveaTransactionService(svea_client)
+                accounts = await txn_service.list_accounts()
+                if not accounts:
+                    logger.warning("job_skipped", job="daily_voucher_sync", reason="no_accounts")
+                    return
+
+                sync_service = TransactionSyncService(conn, svea_client)
+                sync_result = await sync_service.sync_transactions(accounts[0].account_id)
+                logger.info("voucher_sync_fetched", new=sync_result.new)
+
+                if sync_result.new == 0:
+                    logger.info("job_completed", job="daily_voucher_sync", note="no_new_transactions")
+                    return
+
+                # Run reconciliation with auto-journal for confident matches
+                from datetime import date, timedelta
+
+                async with FortnoxClient(token_manager=fortnox_manager) as fortnox_client:
+                    recon_service = SveaReconciliationService(
+                        db=conn,
+                        sync_service=sync_service,
+                        fortnox_client=fortnox_client,
+                    )
+                    today = date.today()
+                    report = await recon_service.run(
+                        from_date=today - timedelta(days=7),
+                        to_date=today,
+                        dry_run=False,
+                    )
+                    logger.info(
+                        "job_completed",
+                        job="daily_voucher_sync",
+                        auto_journaled=report.auto_journaled,
+                        pending_review=report.pending_review,
+                    )
+        finally:
+            await db.close()
+
+    except Exception as e:
+        logger.error("job_failed", job="daily_voucher_sync", error=str(e))
 
 
 async def daily_invoice_check_job() -> None:
     """Check for overdue customer invoices."""
     logger.info("job_started", job="daily_invoice_check")
     try:
-        from fortnox.api.auth import TokenManager
-        from fortnox.api.client import FortnoxClient
-        from fortnox.api.invoices import InvoiceService
+        from fortnox.fortnox.api.auth import TokenManager
+        from fortnox.fortnox.api.client import FortnoxClient
+        from fortnox.fortnox.api.invoices import InvoiceService
 
         token_manager = TokenManager()
         await token_manager.initialize()
@@ -58,10 +121,74 @@ async def daily_invoice_check_job() -> None:
 
 
 async def weekly_reconciliation_job() -> None:
-    """Run bank reconciliation via web agent."""
+    """Run full Svea Bank reconciliation against Fortnox GL."""
     logger.info("job_started", job="weekly_reconciliation")
-    # TODO: Implement full reconciliation pipeline
-    logger.info("job_completed", job="weekly_reconciliation", note="not_yet_implemented")
+    try:
+        from datetime import date, timedelta
+
+        from fortnox.fortnox.api.auth import TokenManager
+        from fortnox.fortnox.api.client import FortnoxClient
+        from fortnox.storage.database import Database
+        from fortnox.svea.api.auth import SveaTokenManager
+        from fortnox.svea.api.client import SveaClient
+        from fortnox.svea.reconcile import SveaReconciliationService
+        from fortnox.svea.sync import TransactionSyncService
+
+        svea_manager = SveaTokenManager()
+        await svea_manager.initialize()
+        if not svea_manager.is_authenticated:
+            logger.warning("job_skipped", job="weekly_reconciliation", reason="svea_not_authenticated")
+            return
+
+        fortnox_manager = TokenManager()
+        await fortnox_manager.initialize()
+
+        db = Database()
+        conn = await db.connect()
+
+        try:
+            async with SveaClient(token_manager=svea_manager) as svea_client:
+                async with FortnoxClient(token_manager=fortnox_manager) as fortnox_client:
+                    sync_service = TransactionSyncService(conn, svea_client)
+                    recon_service = SveaReconciliationService(
+                        db=conn,
+                        sync_service=sync_service,
+                        fortnox_client=fortnox_client,
+                    )
+                    today = date.today()
+                    report = await recon_service.run(
+                        from_date=today - timedelta(days=30),
+                        to_date=today,
+                        dry_run=False,
+                    )
+                    logger.info(
+                        "job_completed",
+                        job="weekly_reconciliation",
+                        matches=len(report.reconciliation.matches),
+                        match_rate=round(report.reconciliation.match_rate, 2),
+                        auto_journaled=report.auto_journaled,
+                        pending_review=report.pending_review,
+                    )
+        finally:
+            await db.close()
+
+    except Exception as e:
+        logger.error("job_failed", job="weekly_reconciliation", error=str(e))
+
+
+async def svea_token_refresh_job() -> None:
+    """Proactively refresh Svea Bank OAuth tokens."""
+    from fortnox.svea.api.auth import SveaTokenManager
+
+    logger.info("job_started", job="svea_token_refresh")
+    try:
+        manager = SveaTokenManager()
+        await manager.initialize()
+        if manager.is_authenticated:
+            await manager.get_access_token()
+            logger.info("job_completed", job="svea_token_refresh")
+    except Exception as e:
+        logger.error("job_failed", job="svea_token_refresh", error=str(e))
 
 
 async def monthly_closing_check_job() -> None:
@@ -71,8 +198,8 @@ async def monthly_closing_check_job() -> None:
         from datetime import date, timedelta
 
         from fortnox.bookkeeping.closing import ClosingService
-        from fortnox.api.auth import TokenManager
-        from fortnox.api.client import FortnoxClient
+        from fortnox.fortnox.api.auth import TokenManager
+        from fortnox.fortnox.api.client import FortnoxClient
 
         # Previous month's last day
         today = date.today()
@@ -176,6 +303,15 @@ def register_jobs(scheduler: AsyncIOScheduler) -> None:
         minute=0,
         id="monthly_period_close",
         name="Monthly Period Close",
+    )
+
+    # Svea Bank token refresh every 45 minutes
+    scheduler.add_job(
+        svea_token_refresh_job,
+        "interval",
+        minutes=45,
+        id="svea_token_refresh",
+        name="Svea Bank Token Refresh",
     )
 
     logger.info("all_jobs_registered")

@@ -64,6 +64,53 @@ MIGRATIONS: list[str] = [
     CREATE INDEX IF NOT EXISTS idx_job_runs_name ON job_runs(job_name);
     CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action);
     """,
+    # Migration 2: Svea Bank integration
+    """
+    CREATE TABLE IF NOT EXISTS svea_transactions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        transaction_id TEXT UNIQUE NOT NULL,
+        account_number TEXT NOT NULL,
+        booking_date TEXT NOT NULL,
+        value_date TEXT,
+        amount REAL NOT NULL,
+        balance_after REAL,
+        description TEXT NOT NULL,
+        reference TEXT DEFAULT '',
+        counterparty TEXT DEFAULT '',
+        transaction_type TEXT DEFAULT '',
+        raw_json TEXT,
+        synced_at TEXT NOT NULL DEFAULT (datetime('now')),
+        reconciled INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS svea_payments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        payment_id TEXT UNIQUE,
+        supplier_invoice_id INTEGER,
+        recipient_name TEXT NOT NULL,
+        recipient_account TEXT NOT NULL,
+        account_type TEXT NOT NULL,
+        amount REAL NOT NULL,
+        currency TEXT NOT NULL DEFAULT 'SEK',
+        reference TEXT DEFAULT '',
+        due_date TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        batch_id TEXT,
+        signed_at TEXT,
+        executed_at TEXT,
+        fortnox_voucher_series TEXT,
+        fortnox_voucher_number INTEGER,
+        error TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_svea_txn_booking ON svea_transactions(booking_date);
+    CREATE INDEX IF NOT EXISTS idx_svea_txn_reconciled ON svea_transactions(reconciled);
+    CREATE INDEX IF NOT EXISTS idx_svea_pay_status ON svea_payments(status);
+    CREATE INDEX IF NOT EXISTS idx_svea_pay_due ON svea_payments(due_date);
+    CREATE INDEX IF NOT EXISTS idx_svea_pay_batch ON svea_payments(batch_id);
+    """,
 ]
 
 
