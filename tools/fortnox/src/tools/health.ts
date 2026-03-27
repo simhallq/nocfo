@@ -1,5 +1,5 @@
 import { Type } from "@sinclair/typebox";
-import { fortnoxApi, jsonResult, errorResult } from "../client.js";
+import { callFortnox } from "../client.js";
 
 export const fortnoxHealth = {
   name: "fortnox_health",
@@ -8,9 +8,7 @@ export const fortnoxHealth = {
     "Call this before any other Fortnox operation.",
   parameters: Type.Object({}),
 
-  async execute() {
-    const res = await fortnoxApi("GET", "/health");
-    if (!res.ok) return errorResult("Health check failed", res.data);
-    return jsonResult(res.data);
+  async execute(_id: string) {
+    return callFortnox("GET", "/health", undefined, "Health check failed");
   },
 };

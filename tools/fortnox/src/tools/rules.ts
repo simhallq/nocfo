@@ -1,5 +1,5 @@
 import { Type } from "@sinclair/typebox";
-import { fortnoxApi, jsonResult, errorResult } from "../client.js";
+import { CustomerIdParam, callFortnox } from "../client.js";
 
 export const fortnoxRulesList = {
   name: "fortnox_rules_list",
@@ -7,17 +7,11 @@ export const fortnoxRulesList = {
     "List current Regelverk (automatic categorization rules) in Fortnox. " +
     "Always show current rules before proposing changes.",
   parameters: Type.Object({
-    customer_id: Type.String({
-      description: 'Fortnox customer ID, e.g. "simon-hallqvist-invest"',
-    }),
+    customer_id: CustomerIdParam,
   }),
 
   async execute(_id: string, params: { customer_id: string }) {
-    const res = await fortnoxApi("POST", "/rules/list", {
-      customer_id: params.customer_id,
-    });
-    if (!res.ok) return errorResult("Rules list failed", res.data);
-    return jsonResult(res.data);
+    return callFortnox("POST", "/rules/list", params, "Rules list failed");
   },
 };
 
@@ -28,9 +22,7 @@ export const fortnoxRulesSync = {
     "Always list current rules first with fortnox_rules_list " +
     "and confirm changes with the user before syncing.",
   parameters: Type.Object({
-    customer_id: Type.String({
-      description: 'Fortnox customer ID, e.g. "simon-hallqvist-invest"',
-    }),
+    customer_id: CustomerIdParam,
     rules: Type.Array(
       Type.Object({
         pattern: Type.String({ description: "Transaction text match pattern" }),
@@ -46,11 +38,6 @@ export const fortnoxRulesSync = {
     _id: string,
     params: { customer_id: string; rules: unknown[] },
   ) {
-    const res = await fortnoxApi("POST", "/rules/sync", {
-      customer_id: params.customer_id,
-      rules: params.rules,
-    });
-    if (!res.ok) return errorResult("Rules sync failed", res.data);
-    return jsonResult(res.data);
+    return callFortnox("POST", "/rules/sync", params, "Rules sync failed");
   },
 };

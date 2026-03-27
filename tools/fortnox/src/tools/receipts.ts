@@ -1,5 +1,5 @@
 import { Type } from "@sinclair/typebox";
-import { fortnoxApi, jsonResult, errorResult } from "../client.js";
+import { CustomerIdParam, callFortnox } from "../client.js";
 
 export const fortnoxReceiptAnalyze = {
   name: "fortnox_receipt_analyze",
@@ -9,9 +9,7 @@ export const fortnoxReceiptAnalyze = {
     "ALWAYS call this before fortnox_receipt_book. " +
     "Show the preview to the user and wait for confirmation before booking.",
   parameters: Type.Object({
-    customer_id: Type.String({
-      description: 'Fortnox customer ID, e.g. "simon-hallqvist-invest"',
-    }),
+    customer_id: CustomerIdParam,
     file_content: Type.String({
       description: "Base64-encoded PDF/image file content",
     }),
@@ -24,25 +22,15 @@ export const fortnoxReceiptAnalyze = {
     _id: string,
     params: { customer_id: string; file_content: string; filename: string },
   ) {
-    const res = await fortnoxApi("POST", "/receipts/analyze", {
-      customer_id: params.customer_id,
-      file_content: params.file_content,
-      filename: params.filename,
-    });
-    if (!res.ok) return errorResult("Receipt analysis failed", res.data);
-    return jsonResult(res.data);
+    return callFortnox("POST", "/receipts/analyze", params, "Receipt analysis failed");
   },
 };
 
 const VoucherRowSchema = Type.Object({
   account: Type.Number({ description: "BAS account number, e.g. 6110" }),
   debit: Type.String({ description: 'Debit amount as string, e.g. "800.00"' }),
-  credit: Type.String({
-    description: 'Credit amount as string, e.g. "0"',
-  }),
-  transaction_information: Type.String({
-    description: "Line description",
-  }),
+  credit: Type.String({ description: 'Credit amount as string, e.g. "0"' }),
+  transaction_information: Type.String({ description: "Line description" }),
 });
 
 const VoucherSchema = Type.Object({
@@ -50,9 +38,7 @@ const VoucherSchema = Type.Object({
     description: "Voucher description, e.g. supplier name + invoice number",
   }),
   voucher_series: Type.String({ description: 'Usually "A"' }),
-  transaction_date: Type.String({
-    description: "ISO date, e.g. 2024-03-15",
-  }),
+  transaction_date: Type.String({ description: "ISO date, e.g. 2024-03-15" }),
   rows: Type.Array(VoucherRowSchema, {
     description: "Voucher rows — total debits must equal total credits",
   }),
@@ -66,9 +52,7 @@ export const fortnoxReceiptBook = {
     "getting explicit user confirmation. Pass the proposed_voucher " +
     "from the analyze response (or a user-modified version).",
   parameters: Type.Object({
-    customer_id: Type.String({
-      description: 'Fortnox customer ID, e.g. "simon-hallqvist-invest"',
-    }),
+    customer_id: CustomerIdParam,
     file_content: Type.String({
       description: "Base64-encoded PDF/image file content (same as analyze)",
     }),
@@ -85,13 +69,6 @@ export const fortnoxReceiptBook = {
       voucher: Record<string, unknown>;
     },
   ) {
-    const res = await fortnoxApi("POST", "/receipts/book", {
-      customer_id: params.customer_id,
-      file_content: params.file_content,
-      filename: params.filename,
-      voucher: params.voucher,
-    });
-    if (!res.ok) return errorResult("Receipt booking failed", res.data);
-    return jsonResult(res.data);
+    return callFortnox("POST", "/receipts/book", params, "Receipt booking failed");
   },
 };

@@ -3,6 +3,12 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
+# Cross-platform sed -i (macOS vs GNU)
+replace_in_file() {
+    local pattern="$1" file="$2"
+    sed -i '' "$pattern" "$file" 2>/dev/null || sed -i "$pattern" "$file"
+}
+
 echo "=== Frey Setup ==="
 echo ""
 
@@ -41,18 +47,9 @@ echo "Creating configuration files..."
 # Docker .env
 if [ ! -f "$REPO_ROOT/docker/.env" ]; then
     cp "$REPO_ROOT/docker/.env.example" "$REPO_ROOT/docker/.env"
-    if [ -n "$ANTHROPIC_KEY" ]; then
-        sed -i '' "s|^ANTHROPIC_API_KEY=.*|ANTHROPIC_API_KEY=${ANTHROPIC_KEY}|" "$REPO_ROOT/docker/.env" 2>/dev/null || \
-        sed -i "s|^ANTHROPIC_API_KEY=.*|ANTHROPIC_API_KEY=${ANTHROPIC_KEY}|" "$REPO_ROOT/docker/.env"
-    fi
-    if [ -n "$GATEWAY_TOKEN" ]; then
-        sed -i '' "s|^OPENCLAW_GATEWAY_TOKEN=.*|OPENCLAW_GATEWAY_TOKEN=${GATEWAY_TOKEN}|" "$REPO_ROOT/docker/.env" 2>/dev/null || \
-        sed -i "s|^OPENCLAW_GATEWAY_TOKEN=.*|OPENCLAW_GATEWAY_TOKEN=${GATEWAY_TOKEN}|" "$REPO_ROOT/docker/.env"
-    fi
-    if [ -n "$TELEGRAM_TOKEN" ]; then
-        sed -i '' "s|^TELEGRAM_BOT_TOKEN=.*|TELEGRAM_BOT_TOKEN=${TELEGRAM_TOKEN}|" "$REPO_ROOT/docker/.env" 2>/dev/null || \
-        sed -i "s|^TELEGRAM_BOT_TOKEN=.*|TELEGRAM_BOT_TOKEN=${TELEGRAM_TOKEN}|" "$REPO_ROOT/docker/.env"
-    fi
+    [ -n "$ANTHROPIC_KEY" ] && replace_in_file "s|^ANTHROPIC_API_KEY=.*|ANTHROPIC_API_KEY=${ANTHROPIC_KEY}|" "$REPO_ROOT/docker/.env"
+    [ -n "$GATEWAY_TOKEN" ] && replace_in_file "s|^OPENCLAW_GATEWAY_TOKEN=.*|OPENCLAW_GATEWAY_TOKEN=${GATEWAY_TOKEN}|" "$REPO_ROOT/docker/.env"
+    [ -n "$TELEGRAM_TOKEN" ] && replace_in_file "s|^TELEGRAM_BOT_TOKEN=.*|TELEGRAM_BOT_TOKEN=${TELEGRAM_TOKEN}|" "$REPO_ROOT/docker/.env"
     echo "  Created docker/.env"
 else
     echo "  docker/.env already exists, skipping"
@@ -61,14 +58,8 @@ fi
 # OpenClaw config
 if [ ! -f "$REPO_ROOT/openclaw/openclaw.json" ]; then
     cp "$REPO_ROOT/openclaw/openclaw.json.example" "$REPO_ROOT/openclaw/openclaw.json"
-    if [ -n "$GATEWAY_TOKEN" ]; then
-        sed -i '' "s|<OPENCLAW_GATEWAY_TOKEN>|${GATEWAY_TOKEN}|" "$REPO_ROOT/openclaw/openclaw.json" 2>/dev/null || \
-        sed -i "s|<OPENCLAW_GATEWAY_TOKEN>|${GATEWAY_TOKEN}|" "$REPO_ROOT/openclaw/openclaw.json"
-    fi
-    if [ -n "$TELEGRAM_TOKEN" ]; then
-        sed -i '' "s|<TELEGRAM_BOT_TOKEN>|${TELEGRAM_TOKEN}|" "$REPO_ROOT/openclaw/openclaw.json" 2>/dev/null || \
-        sed -i "s|<TELEGRAM_BOT_TOKEN>|${TELEGRAM_TOKEN}|" "$REPO_ROOT/openclaw/openclaw.json"
-    fi
+    [ -n "$GATEWAY_TOKEN" ] && replace_in_file "s|<OPENCLAW_GATEWAY_TOKEN>|${GATEWAY_TOKEN}|" "$REPO_ROOT/openclaw/openclaw.json"
+    [ -n "$TELEGRAM_TOKEN" ] && replace_in_file "s|<TELEGRAM_BOT_TOKEN>|${TELEGRAM_TOKEN}|" "$REPO_ROOT/openclaw/openclaw.json"
     echo "  Created openclaw/openclaw.json"
 else
     echo "  openclaw/openclaw.json already exists, skipping"
@@ -77,14 +68,8 @@ fi
 # Fortnox service .env
 if [ ! -f "$REPO_ROOT/services/fortnox/.env" ]; then
     cp "$REPO_ROOT/services/fortnox/.env.example" "$REPO_ROOT/services/fortnox/.env"
-    if [ -n "$ANTHROPIC_KEY" ]; then
-        sed -i '' "s|^ANTHROPIC_API_KEY=.*|ANTHROPIC_API_KEY=${ANTHROPIC_KEY}|" "$REPO_ROOT/services/fortnox/.env" 2>/dev/null || \
-        sed -i "s|^ANTHROPIC_API_KEY=.*|ANTHROPIC_API_KEY=${ANTHROPIC_KEY}|" "$REPO_ROOT/services/fortnox/.env"
-    fi
-    if [ -n "$BROWSER_TOKEN" ]; then
-        sed -i '' "s|^BROWSER_API_TOKEN=.*|BROWSER_API_TOKEN=${BROWSER_TOKEN}|" "$REPO_ROOT/services/fortnox/.env" 2>/dev/null || \
-        sed -i "s|^BROWSER_API_TOKEN=.*|BROWSER_API_TOKEN=${BROWSER_TOKEN}|" "$REPO_ROOT/services/fortnox/.env"
-    fi
+    [ -n "$ANTHROPIC_KEY" ] && replace_in_file "s|^ANTHROPIC_API_KEY=.*|ANTHROPIC_API_KEY=${ANTHROPIC_KEY}|" "$REPO_ROOT/services/fortnox/.env"
+    [ -n "$BROWSER_TOKEN" ] && replace_in_file "s|^BROWSER_API_TOKEN=.*|BROWSER_API_TOKEN=${BROWSER_TOKEN}|" "$REPO_ROOT/services/fortnox/.env"
     echo "  Created services/fortnox/.env"
 else
     echo "  services/fortnox/.env already exists, skipping"

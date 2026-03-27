@@ -1,21 +1,26 @@
+x-common-env: &common-env
+  HOME: /home/node
+  TERM: xterm-256color
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+  OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN}
+  FORTNOX_API_URL: http://host.docker.internal:8790
+  FORTNOX_API_TOKEN: ${FORTNOX_API_TOKEN:-}
+
+x-common-volumes: &common-volumes
+  - ${OPENCLAW_CONFIG_DIR:-./data/openclaw}:/home/node/.openclaw
+  - ${FREY_WORKSPACE_DIR:-../workspace}:/home/node/.openclaw/workspace
+  - ${FREY_SKILLS_DIR:-../skills}:/home/node/.openclaw/skills
+  - ../openclaw/openclaw.json:/home/node/.openclaw/openclaw.json:ro
+  - ../tools/fortnox:/home/node/.openclaw/plugins/fortnox:ro
+
 services:
   openclaw-gateway:
     image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:latest}
     user: root
     environment:
-      HOME: /home/node
-      TERM: xterm-256color
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN}
+      <<: *common-env
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
-      FORTNOX_API_URL: http://host.docker.internal:8790
-      FORTNOX_API_TOKEN: ${FORTNOX_API_TOKEN:-}
-    volumes:
-      - ${OPENCLAW_CONFIG_DIR:-./data/openclaw}:/home/node/.openclaw
-      - ${FREY_WORKSPACE_DIR:-../workspace}:/home/node/.openclaw/workspace
-      - ${FREY_SKILLS_DIR:-../skills}:/home/node/.openclaw/skills
-      - ../openclaw/openclaw.json:/home/node/.openclaw/openclaw.json:ro
-      - ../tools/fortnox:/home/node/.openclaw/plugins/fortnox:ro
+    volumes: *common-volumes
     ports:
       - "127.0.0.1:18789:18789"
       - "127.0.0.1:18790:18790"
@@ -36,19 +41,8 @@ services:
   openclaw-cli:
     image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:latest}
     profiles: [cli]
-    environment:
-      HOME: /home/node
-      TERM: xterm-256color
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN}
-      FORTNOX_API_URL: http://host.docker.internal:8790
-      FORTNOX_API_TOKEN: ${FORTNOX_API_TOKEN:-}
-    volumes:
-      - ${OPENCLAW_CONFIG_DIR:-./data/openclaw}:/home/node/.openclaw
-      - ${FREY_WORKSPACE_DIR:-../workspace}:/home/node/.openclaw/workspace
-      - ${FREY_SKILLS_DIR:-../skills}:/home/node/.openclaw/skills
-      - ../openclaw/openclaw.json:/home/node/.openclaw/openclaw.json:ro
-      - ../tools/fortnox:/home/node/.openclaw/plugins/fortnox:ro
+    environment: *common-env
+    volumes: *common-volumes
     extra_hosts:
       - "host.docker.internal:host-gateway"
     stdin_open: true
