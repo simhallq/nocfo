@@ -66,7 +66,7 @@ def auth() -> None:
 def setup(customer: str | None) -> None:
     """Run interactive OAuth setup."""
     from fortnox.config import get_settings
-    from fortnox.api.auth import TokenManager, exchange_code_for_token, start_authorization
+    from fortnox.fortnox.api.auth import TokenManager, exchange_code_for_token, start_authorization
 
     settings = get_settings()
     if not settings.validate_fortnox_credentials():
@@ -96,7 +96,7 @@ def setup(customer: str | None) -> None:
 @click.option("--health", is_flag=True, help="Run full health check against Fortnox API")
 def status(health: bool) -> None:
     """Check authentication status."""
-    from fortnox.api.auth import TokenManager
+    from fortnox.fortnox.api.auth import TokenManager
 
     async def _check():
         manager = TokenManager()
@@ -111,8 +111,8 @@ def status(health: bool) -> None:
         return
 
     if health:
-        from fortnox.api.client import FortnoxClient
-        from fortnox.api.health import HealthCheck
+        from fortnox.fortnox.api.client import FortnoxClient
+        from fortnox.fortnox.api.health import HealthCheck
 
         async def _health():
             async with FortnoxClient(token_manager=manager) as client:
@@ -150,8 +150,8 @@ def voucher_from_invoice(pdf_path: str, txn_date: str | None, customer: str | No
 
     from fortnox.bookkeeping.invoice_to_voucher import create_voucher_from_invoice
     from fortnox.config import get_settings
-    from fortnox.api.auth import TokenManager
-    from fortnox.api.client import FortnoxClient
+    from fortnox.fortnox.api.auth import TokenManager
+    from fortnox.fortnox.api.client import FortnoxClient
 
     settings = get_settings()
     if not settings.validate_anthropic_key():
@@ -192,9 +192,9 @@ def voucher_from_invoice(pdf_path: str, txn_date: str | None, customer: str | No
 @click.option("--series", default="A", help="Voucher series")
 def voucher_list(series: str) -> None:
     """List vouchers."""
-    from fortnox.api.auth import TokenManager
-    from fortnox.api.client import FortnoxClient
-    from fortnox.api.vouchers import VoucherService
+    from fortnox.fortnox.api.auth import TokenManager
+    from fortnox.fortnox.api.client import FortnoxClient
+    from fortnox.fortnox.api.vouchers import VoucherService
 
     async def _list():
         manager = TokenManager()
@@ -223,8 +223,8 @@ def voucher_create(template: str, amount: float, txn_date: str, description: str
     from decimal import Decimal
 
     from fortnox.bookkeeping.journal import JournalService
-    from fortnox.api.auth import TokenManager
-    from fortnox.api.client import FortnoxClient
+    from fortnox.fortnox.api.auth import TokenManager
+    from fortnox.fortnox.api.client import FortnoxClient
     from fortnox.storage.database import Database
     from fortnox.storage.idempotency import IdempotencyStore
 
@@ -322,8 +322,8 @@ def close() -> None:
 def close_check(month: str) -> None:
     """Check if a month can be closed (format: YYYY-MM)."""
     from fortnox.bookkeeping.closing import ClosingService
-    from fortnox.api.auth import TokenManager
-    from fortnox.api.client import FortnoxClient
+    from fortnox.fortnox.api.auth import TokenManager
+    from fortnox.fortnox.api.client import FortnoxClient
 
     period_end = parse_month(month)
 
@@ -866,3 +866,344 @@ def record_enhance(name: str) -> None:
 
     enhanced_count = sum(1 for s in workflow.steps if s.selectors.semantic)
     click.echo(f"Enhanced {enhanced_count}/{workflow.total_steps} steps with semantic selectors.")
+
+
+# --- Svea Bank commands ---
+
+
+@cli.group()
+def svea() -> None:
+    """Svea Bank operations — auth, transactions, reconciliation, payments."""
+    pass
+
+
+@svea.command("auth")
+def svea_auth() -> None:
+    """Authenticate with Svea Bank via BankID.
+
+    Opens a browser for BankID authentication, then stores OAuth tokens
+    for subsequent API calls to bankapi.svea.com.
+    """
+    from playwright.sync_api import sync_playwright
+
+    from fortnox.config import get_settings
+    from fortnox.svea.browser.auth import svea_bankid_login
+    from fortnox.svea.browser.session import complete_auth_and_store_tokens
+
+    settings = get_settings()
+    click.echo("Starting Svea Bank BankID authentication...")
+    click.echo("A browser window will open. Complete BankID to authenticate.")
+
+    pw = sync_playwright().start()
+    try:
+        cdp_url = f"http://localhost:{settings.browser_cdp_port}"
+        browser = pw.chromium.connect_over_cdp(cdp_url)
+
+        def on_qr(qr_data: str) -> None:
+            click.echo("  BankID QR updated (scan with BankID app)")
+
+        result = svea_bankid_login(browser, qr_callback=on_qr)
+
+        if "code" in result:
+            click.echo("BankID successful. Exchanging for tokens...")
+
+            async def _exchange():
+                return await complete_auth_and_store_tokens(
+                    code=result["code"],
+                    code_verifier=result["code_verifier"],
+                )
+
+            run_async(_exchange())
+            click.echo("Svea Bank authentication complete! Tokens stored.")
+        else:
+            click.echo(f"Authentication failed: {result.get('message', result.get('error'))}")
+            sys.exit(1)
+
+    except Exception as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    finally:
+        pw.stop()
+
+
+@svea.command("status")
+def svea_status() -> None:
+    """Check Svea Bank authentication status and account info."""
+    from fortnox.svea.api.auth import SveaTokenManager
+
+    async def _check():
+        manager = SveaTokenManager()
+        await manager.initialize()
+        return manager.is_authenticated, manager
+
+    is_auth, manager = run_async(_check())
+    click.echo(f"Authenticated: {'Yes' if is_auth else 'No'}")
+
+    if not is_auth:
+        click.echo("Run 'nocfo svea auth' to authenticate with BankID.")
+        return
+
+    # Try to fetch account info
+    from fortnox.svea.api.client import SveaClient
+    from fortnox.svea.api.transactions import SveaTransactionService
+
+    async def _accounts():
+        async with SveaClient(token_manager=manager) as client:
+            service = SveaTransactionService(client)
+            return await service.list_accounts()
+
+    try:
+        accounts = run_async(_accounts())
+        click.echo(f"\nAccounts ({len(accounts)}):")
+        for acc in accounts:
+            click.echo(
+                f"  {acc.account_number}  {acc.name:30}  "
+                f"{acc.balance:>12,.2f} {acc.currency}  ({acc.account_type})"
+            )
+    except Exception as e:
+        click.echo(f"  Could not fetch accounts: {e}")
+
+
+@svea.command("sync")
+@click.option("--account", default=None, help="Svea account ID (uses first account if omitted)")
+@click.option("--from", "from_date", default=None, help="Start date (YYYY-MM-DD)")
+@click.option("--to", "to_date", default=None, help="End date (YYYY-MM-DD)")
+def svea_sync(account: str | None, from_date: str | None, to_date: str | None) -> None:
+    """Fetch new transactions from Svea Bank."""
+    from datetime import date as date_cls
+
+    from fortnox.storage.database import Database
+    from fortnox.svea.api.auth import SveaTokenManager
+    from fortnox.svea.api.client import SveaClient
+    from fortnox.svea.api.transactions import SveaTransactionService
+    from fortnox.svea.sync import TransactionSyncService
+
+    fd = date_cls.fromisoformat(from_date) if from_date else None
+    td = date_cls.fromisoformat(to_date) if to_date else None
+
+    async def _sync():
+        manager = SveaTokenManager()
+        await manager.initialize()
+        db = Database()
+        conn = await db.connect()
+
+        try:
+            async with SveaClient(token_manager=manager) as client:
+                # Resolve account ID if not specified
+                account_id = account
+                if not account_id:
+                    txn_service = SveaTransactionService(client)
+                    accounts = await txn_service.list_accounts()
+                    if not accounts:
+                        click.echo("No accounts found.")
+                        return None
+                    account_id = accounts[0].account_id
+                    click.echo(f"Using account: {accounts[0].account_number} ({accounts[0].name})")
+
+                sync_service = TransactionSyncService(conn, client)
+                return await sync_service.sync_transactions(account_id, fd, td)
+        finally:
+            await db.close()
+
+    result = run_async(_sync())
+    if result:
+        click.echo(f"\nSync complete:")
+        click.echo(f"  Fetched:    {result.fetched}")
+        click.echo(f"  New:        {result.new}")
+        click.echo(f"  Duplicates: {result.duplicates}")
+
+
+@svea.command("reconcile")
+@click.option("--from", "from_date", required=True, help="Start date (YYYY-MM-DD)")
+@click.option("--to", "to_date", required=True, help="End date (YYYY-MM-DD)")
+@click.option("--account", default=None, help="Svea account number filter")
+@click.option("--post", is_flag=True, help="Actually create vouchers (default is dry-run)")
+def svea_reconcile(from_date: str, to_date: str, account: str | None, post: bool) -> None:
+    """Run bank reconciliation between Svea Bank and Fortnox GL."""
+    from datetime import date as date_cls
+
+    from fortnox.fortnox.api.auth import TokenManager
+    from fortnox.fortnox.api.client import FortnoxClient
+    from fortnox.storage.database import Database
+    from fortnox.svea.api.auth import SveaTokenManager
+    from fortnox.svea.api.client import SveaClient
+    from fortnox.svea.reconcile import SveaReconciliationService
+    from fortnox.svea.sync import TransactionSyncService
+
+    fd = date_cls.fromisoformat(from_date)
+    td = date_cls.fromisoformat(to_date)
+    dry_run = not post
+
+    async def _reconcile():
+        svea_manager = SveaTokenManager()
+        await svea_manager.initialize()
+        fortnox_manager = TokenManager()
+        await fortnox_manager.initialize()
+        db = Database()
+        conn = await db.connect()
+
+        try:
+            async with SveaClient(token_manager=svea_manager) as svea_client:
+                async with FortnoxClient(token_manager=fortnox_manager) as fortnox_client:
+                    sync_service = TransactionSyncService(conn, svea_client)
+                    recon_service = SveaReconciliationService(
+                        db=conn,
+                        sync_service=sync_service,
+                        fortnox_client=fortnox_client,
+                    )
+                    return await recon_service.run(fd, td, account, dry_run=dry_run)
+        finally:
+            await db.close()
+
+    report = run_async(_reconcile())
+    click.echo(f"\n{'DRY RUN — ' if dry_run else ''}{report.summary}")
+
+    if report.vouchers_created:
+        click.echo(f"\nVouchers created:")
+        for v in report.vouchers_created:
+            click.echo(f"  {v['voucher_series']}{v['voucher_number']}  {v['date']}  {v['amount']}  [{v['rule']}]")
+
+    if report.review_items:
+        click.echo(f"\nPending review ({len(report.review_items)}):")
+        for item in report.review_items[:10]:
+            click.echo(f"  {item['date']}  {item['amount']:>12}  {item['description'][:60]}")
+        if len(report.review_items) > 10:
+            click.echo(f"  ... and {len(report.review_items) - 10} more")
+
+    if dry_run:
+        click.echo("\nDRY RUN — no changes made. Use --post to create vouchers.")
+
+
+@svea.command("review")
+@click.option("--account", default=None, help="Filter by account number")
+def svea_review(account: str | None) -> None:
+    """Show unreconciled transactions pending review."""
+    from fortnox.storage.database import Database
+    from fortnox.svea.api.auth import SveaTokenManager
+    from fortnox.svea.api.client import SveaClient
+    from fortnox.svea.sync import TransactionSyncService
+
+    async def _review():
+        svea_manager = SveaTokenManager()
+        await svea_manager.initialize()
+        db = Database()
+        conn = await db.connect()
+
+        try:
+            async with SveaClient(token_manager=svea_manager) as client:
+                sync_service = TransactionSyncService(conn, client)
+                txns = await sync_service.get_unreconciled_transactions(account)
+                stats = await sync_service.get_transaction_count(account)
+                return txns, stats
+        finally:
+            await db.close()
+
+    txns, stats = run_async(_review())
+    click.echo(f"Transactions: {stats['total']} total, {stats['reconciled']} reconciled, {stats['pending']} pending")
+
+    if txns:
+        click.echo(f"\nUnreconciled ({len(txns)}):")
+        for t in txns[:20]:
+            click.echo(f"  {t.date}  {t.amount:>12,.2f}  {t.description[:60]}")
+        if len(txns) > 20:
+            click.echo(f"  ... and {len(txns) - 20} more")
+    else:
+        click.echo("All transactions are reconciled.")
+
+
+@svea.command("pay")
+@click.option("--date", "as_of", default=None, help="Due date cutoff (YYYY-MM-DD, default: today)")
+@click.option("--debtor-name", required=True, help="Paying company name")
+@click.option("--debtor-account", required=True, help="Paying account (clearing+account)")
+@click.option("--post", is_flag=True, help="Actually create and upload payments (default is dry-run)")
+def svea_pay(as_of: str | None, debtor_name: str, debtor_account: str, post: bool) -> None:
+    """Find due supplier invoices and create payment batch."""
+    from datetime import date as date_cls
+
+    from fortnox.fortnox.api.auth import TokenManager
+    from fortnox.fortnox.api.client import FortnoxClient
+    from fortnox.storage.database import Database
+    from fortnox.svea.payments.service import PaymentService
+
+    due_date = date_cls.fromisoformat(as_of) if as_of else None
+
+    async def _pay():
+        fortnox_manager = TokenManager()
+        await fortnox_manager.initialize()
+        db = Database()
+        conn = await db.connect()
+
+        try:
+            async with FortnoxClient(token_manager=fortnox_manager) as fortnox_client:
+                service = PaymentService(
+                    db=conn,
+                    fortnox_client=fortnox_client,
+                    debtor_name=debtor_name,
+                    debtor_account=debtor_account,
+                )
+
+                # Find due invoices
+                invoices = await service.find_due_invoices(due_date)
+                if not invoices:
+                    click.echo("No supplier invoices due for payment.")
+                    return None
+
+                click.echo(f"Found {len(invoices)} due supplier invoices:")
+                for inv in invoices:
+                    click.echo(
+                        f"  #{inv.given_number}  {inv.supplier_number:>10}  "
+                        f"{inv.balance:>12,.2f} SEK  due {inv.due_date}"
+                    )
+
+                if not post:
+                    return None
+
+                # Create batch and generate ISO 20022 XML
+                result = await service.create_batch(invoices)
+                return result
+        finally:
+            await db.close()
+
+    result = run_async(_pay())
+    if result:
+        click.echo(f"\n{result.summary}")
+        if result.xml_file:
+            # Save XML file
+            filename = f"pain001_{result.batch_id}.xml"
+            with open(filename, "wb") as f:
+                f.write(result.xml_file)
+            click.echo(f"ISO 20022 file saved: {filename} ({len(result.xml_file)} bytes)")
+        click.echo("\nUpload this file to Svea Bank 'Betala från fil' and sign with BankID.")
+    elif not result:
+        click.echo("\nDRY RUN — no payments created. Use --post to create payment batch.")
+
+
+@svea.command("pay-status")
+@click.argument("batch_id")
+def svea_pay_status(batch_id: str) -> None:
+    """Show payment batch status."""
+    from fortnox.storage.database import Database
+    from fortnox.svea.payments.service import PaymentService
+
+    async def _status():
+        db = Database()
+        conn = await db.connect()
+        try:
+            service = PaymentService(db=conn)
+            return await service.get_batch_status(batch_id)
+        finally:
+            await db.close()
+
+    status = run_async(_status())
+    click.echo(f"Batch: {status['batch_id']}")
+    for st, info in status.get("statuses", {}).items():
+        click.echo(f"  {st}: {info['count']} payments, {info['total']:,.2f} SEK")
+
+
+@svea.command("discover")
+@click.option("--token", default=None, help="Bearer token for authenticated API probing")
+def svea_discover(token: str | None) -> None:
+    """Run API discovery spike against Svea Bank endpoints."""
+    from fortnox.svea.api.discovery import run_discovery
+
+    run_async(run_discovery(probe_auth=True, probe_api=True, bearer_token=token))

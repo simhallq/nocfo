@@ -58,6 +58,17 @@ class Settings(BaseSettings):
         default=Path("data/sessions"), description="Per-customer session cookies"
     )
 
+    # Svea Bank settings
+    svea_bank_api_url: str = Field(
+        default="https://bankapi.svea.com", description="Svea Bank API base URL"
+    )
+    svea_auth_url: str = Field(
+        default="https://auth.svea.com", description="Svea Bank OAuth/OIDC authority"
+    )
+    svea_tokens_path: Path = Field(
+        default=Path("data/svea_tokens.json"), description="Svea Bank token storage path"
+    )
+
     def validate_fortnox_credentials(self) -> bool:
         """Check that Fortnox credentials are configured."""
         return bool(self.fortnox_client_id and self.fortnox_client_secret)
